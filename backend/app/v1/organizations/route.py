@@ -39,12 +39,54 @@ def check_superadmin(current_user: dict = Depends(get_current_user)):
     - Sends welcome email to organization
     - Sends SMS notification to admin
     - Links admin user to organization
+    - Sets admin user access limit (default: 2)
+    
+    **🎭 Roles & Access Limits:**
+    
+    The system has 4 roles with 2 separate access limits:
+    
+    **Admin Users (Limited by `admin_user_access_limit`):**
+    1. **`org_admin`** - Organization Administrator
+       - Full organization access
+       - Auto-created with this endpoint (counts as 1)
+       - Can manage departments, employees, hr_admins
+       
+    2. **`hr_admin`** - HR Administrator
+       - HR operations access
+       - Created by org_admin
+       - Manages payroll, attendance, leaves
+    
+    **Regular Users (Limited by `emp_count_for_access`):**
+    3. **`employee`** - Regular Employee
+       - Self-service access
+       - Apply leave, mark attendance, view payslips
+    
+    **System Level (No Limit):**
+    4. **`superadmin`** - System Administrator
+       - Full system access
+       - Not tied to organizations
+    
+    **Access Limits:**
+    - **`emp_count_for_access`**: Maximum number of employees allowed
+    - **`admin_user_access_limit`**: Maximum number of admin users (org_admin + hr_admin) allowed (default: 2)
+    
+    **Example Scenario:**
+    ```
+    Create organization with:
+    - emp_count_for_access: 100 (can add 100 employees)
+    - admin_user_access_limit: 3 (can have 3 admin users total)
+    
+    After creation:
+    - 1 org_admin created automatically
+    - Can add 2 more admin users (org_admin or hr_admin)
+    - Can add 100 employees
+    ```
     
     **Actions Performed:**
     1. Validates organization email (must be unique)
     2. Validates admin email (must be unique)
     3. Creates org_admin user with default password **"Welcome1"**
-    4. Creates organization record
+    4. Creates organization record with access limits
     5. Links user and organization
     6. Sends email & SMS notifications
     
@@ -54,10 +96,33 @@ def check_superadmin(current_user: dict = Depends(get_current_user)):
     - Role: org_admin
     - requires_password_change: true
     
+    **Request Example:**
+    ```json
+    {
+      "org_name": "Tech Solutions Inc",
+      "email": "contact@techsolutions.com",
+      "emp_count_for_access": 100,
+      "admin_user_access_limit": 2,
+      "industry": "Information Technology",
+      "country": "India",
+      "state": "Karnataka",
+      "admin_name": "Rajesh Kumar",
+      "admin_email": "admin@techsolutions.com",
+      "admin_phone": "+919876543210",
+      "org_address": "123 MG Road, Bangalore"
+    }
+    ```
+    
     **Response:**
     - Returns organization details
     - Includes `temp_admin_password: "Welcome1"` in response
     - notification_sent flag indicates success
+    
+    **Check Admin User Limit:**
+    After creation, use `GET /organizations/{org_id}/admin-user-limit` to check:
+    - Current count of admin users
+    - Remaining slots available
+    - Whether more admin users can be added
     """,
     responses={
         201: {"description": "Organization created successfully with admin user"},
@@ -259,3 +324,148 @@ async def delete_organization(
     service = OrganizationService(db)
     result = await service.soft_delete_organization(org_id)
     return result
+
+@router.get(
+    "/{org_id}/admin-user-limit",
+    response_model=dict,
+    summary="Check Admin User Access Limit",
+    description="""
+    **Purpose:** Check how many admin users can be added to an organization
+    
+    **Access:** Superadmin only
+    
+    **Details:**
+    - Returns admin user limit for organization
+    - Shows current count of admin users (org_admin + hr_admin)
+    - Indicates if more admin users can be added
+    - Shows remaining slots
+    
+    **Path Parameters:**
+    - org_id: Organization MongoDB ObjectId
+    
+    **Response:**
+    - limit: Maximum admin users allowed (from admin_user_access_limit)
+    - current_count: Current number of active admin users
+    - can_add_more: Boolean indicating if more can be added
+    - remaining: Number of remaining slots
+    
+    **Use Case:**
+    - Check before creating new org_admin or hr_admin
+    - Validate if organization has reached its admin user quota
+    - Display available slots in frontend
+    
+    **Example Response:**
+    ```json
+    {
+      "limit": 2,
+      "current_count": 1,
+      "can_add_more": true,
+      "remaining": 1
+    }
+    ```
+    """,
+    responses={
+        200: {"description": "Admin user limit information retrieved"},
+        400: {"description": "Invalid organization ID format"},
+        401: {"description": "Not authenticated"},
+        403: {"description": "User is not superadmin"},
+        404: {"description": "Organization not found"}
+    }
+)
+async def check_admin_user_limit(
+    org_id: str = Path(..., description="Organization ID"),
+    db=Depends(get_database),
+    current_user: dict = Depends(check_superadmin)
+):
+    service = OrganizationService(db)
+    result = await service.check_admin_user_limit(org_id)
+    return result
+
+@router.get(
+    "/me",
+    response_model=OrganizationResponse,
+    summary="Get My Organization Details",
+    description="""
+    **Purpose:** Get organization details for the current user's organization
+    
+    **Access:** org_admin, hr_admin
+    
+    **Details:**
+    - Returns organization details for the user's assigned organization
+    - org_admin and hr_admin can view their own organization
+    - Automatically uses organization_id from user's profile
+    - Cannot view other organizations
+    
+    **Use Cases:**
+    - Display company information in dashboard
+    - Show organization profile to admins
+    - View organization limits and settings
+    
+    **Response Includes:**
+    - Organization name, email, industry
+    - Employee access limit (emp_count_for_access)
+    - Admin user access limit (admin_user_access_limit)
+    - Organization address and contact details
+    - Admin information
+    - Organization status
+    
+    **Example Response:**
+    ```json
+    {
+      "id": "65abc123...",
+      "org_name": "Tech Solutions Inc",
+      "email": "contact@techsolutions.com",
+      "emp_count_for_access": 100,
+      "admin_user_access_limit": 2,
+      "industry": "Information Technology",
+      "country": "India",
+      "state": "Karnataka",
+      "admin_name": "Rajesh Kumar",
+      "admin_email": "admin@techsolutions.com",
+      "admin_phone": "+919876543210",
+      "org_address": "123 MG Road, Bangalore",
+      "status": "active",
+      ...
+    }
+    ```
+    
+    **Note:**
+    - User must have organization_id in their profile
+    - Only works for org_admin and hr_admin roles
+    - Returns 404 if organization not found or deleted
+    """,
+    responses={
+        200: {"description": "Organization details retrieved successfully"},
+        401: {"description": "Not authenticated"},
+        403: {"description": "User does not have permission (must be org_admin or hr_admin)"},
+        404: {"description": "Organization not found or user not assigned to any organization"}
+    }
+)
+async def get_my_organization(
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    # Check if user is org_admin or hr_admin
+    user_role = current_user.get("role")
+    if user_role not in ["org_admin", "hr_admin"]:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only org_admin and hr_admin can view organization details"
+        )
+    
+    # Get user's organization_id
+    org_id = current_user.get("organization_id")
+    if not org_id:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not assigned to any organization"
+        )
+    
+    # Get organization details
+    service = OrganizationService(db)
+    organization = await service.get_organization_by_id(org_id)
+    return organization
+
+

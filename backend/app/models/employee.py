@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field, EmailStr
 
@@ -9,12 +9,12 @@ class EmployeeModel(BaseModel):
     last_name: str
     email: EmailStr
     phone: str
-    date_of_birth: date
+    date_of_birth: datetime
     gender: str
     address: str
     department_id: Optional[str] = None
     designation: str
-    joining_date: date
+    joining_date: datetime
     employment_type: str = "full-time"  # full-time, part-time, contract
     status: str = "active"  # active, inactive, terminated
     salary: float

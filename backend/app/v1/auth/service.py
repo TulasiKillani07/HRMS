@@ -92,12 +92,24 @@ class AuthService:
                 detail="Account is inactive"
             )
         
+        # Check if user needs to change password (only on first login)
+        requires_password_change = user.get("requires_password_change", False)
+        
+        # If this is first login (flag is true), set it to false for future logins
+        if requires_password_change:
+            await self.db.users.update_one(
+                {"_id": user["_id"]},
+                {
+                    "$set": {
+                        "requires_password_change": False,
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+        
         # Create tokens
         access_token = create_access_token({"sub": str(user["_id"])})
         refresh_token = create_refresh_token({"sub": str(user["_id"])})
-        
-        # Check if user needs to change password
-        requires_password_change = user.get("requires_password_change", False)
         
         return {
             "access_token": access_token,

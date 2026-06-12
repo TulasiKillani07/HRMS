@@ -7,6 +7,7 @@ class OrganizationModel(BaseModel):
     org_name: str
     email: EmailStr
     emp_count_for_access: int  # Employee limit/quota
+    admin_user_access_limit: int = 2  # Limit for admin users (org_admin + hr_admin), default 2
     industry: str
     country: str
     state: str
@@ -27,6 +28,7 @@ class OrganizationModel(BaseModel):
                 "org_name": "Tech Solutions Inc",
                 "email": "contact@techsolutions.com",
                 "emp_count_for_access": 100,
+                "admin_user_access_limit": 2,
                 "industry": "Information Technology",
                 "country": "USA",
                 "state": "California",

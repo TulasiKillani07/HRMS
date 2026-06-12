@@ -34,12 +34,12 @@ class EmployeeService:
             last_name=data.last_name,
             email=data.email,
             phone=data.phone,
-            date_of_birth=data.date_of_birth,
+            date_of_birth=datetime.combine(data.date_of_birth, datetime.min.time()) if data.date_of_birth else None,
             gender=data.gender,
             address=data.address,
             department_id=data.department_id,
             designation=data.designation,
-            joining_date=data.joining_date,
+            joining_date=datetime.combine(data.joining_date, datetime.min.time()) if data.joining_date else None,
             employment_type=data.employment_type,
             status="active",
             salary=data.salary,
@@ -51,9 +51,9 @@ class EmployeeService:
         
         result = await self.db.employees.insert_one(employee_model.model_dump())
         employee_dict = employee_model.model_dump()
-        employee_dict["_id"] = str(result.inserted_id)
+        employee_dict["id"] = str(result.inserted_id)
         
-        return convert_objectid_to_str(employee_dict)
+        return employee_dict
 
     async def get_employees(self, page: int = 1, limit: int = 10):
         """Get all employees with pagination"""
@@ -62,8 +62,9 @@ class EmployeeService:
         cursor = self.db.employees.find().skip(skip).limit(limit)
         employees = await cursor.to_list(length=limit)
         
-        # Convert ObjectId to string
+        # Convert ObjectId to id
         for emp in employees:
-            emp["_id"] = str(emp["_id"])
+            emp["id"] = str(emp["_id"])
+            del emp["_id"]
         
         return employees

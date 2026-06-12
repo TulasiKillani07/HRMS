@@ -46,11 +46,31 @@ router = APIRouter()
     - At least one digit (0-9)
     - At least one special character (!@#$%^&*...)
     
-    **Supported Roles:**
-    - `superadmin`: Full system access, can create organizations
-    - `org_admin`: Organization administrator (auto-created with org)
-    - `hr_admin`: HR department administrator
-    - `employee`: Regular employee
+    **🎭 Supported Roles (4 Total):**
+    
+    1. **`superadmin`** - System Administrator
+       - Full system access
+       - Can create and manage all organizations
+       - Not tied to any organization
+       - Counted in: N/A (system level)
+       
+    2. **`org_admin`** - Organization Administrator  
+       - Organization-level access
+       - Manages entire organization
+       - Can create departments, employees, hr_admins
+       - Auto-created when organization is created
+       - Counted in: `admin_user_access_limit`
+       
+    3. **`hr_admin`** - HR Administrator
+       - HR department access
+       - Manages payroll, attendance, leaves
+       - Created by org_admin
+       - Counted in: `admin_user_access_limit`
+       
+    4. **`employee`** - Regular Employee (Default)
+       - Self-service access only
+       - Can view profile, apply leave, mark attendance
+       - Counted in: `emp_count_for_access`
     
     **Request Examples:**
     

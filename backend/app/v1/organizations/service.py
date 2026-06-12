@@ -24,6 +24,45 @@ class OrganizationService:
         # Use default password "Welcome1"
         return "Welcome1"
     
+    async def check_admin_user_limit(self, organization_id: str) -> dict:
+        """
+        Check if organization has reached its admin user limit
+        Returns: {
+            "limit": int,
+            "current_count": int,
+            "can_add_more": bool,
+            "remaining": int
+        }
+        """
+        # Get organization
+        org = await self.db.organizations.find_one({
+            "_id": ObjectId(organization_id),
+            "is_deleted": False
+        })
+        
+        if not org:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Organization not found"
+            )
+        
+        # Count current admin users (org_admin + hr_admin)
+        admin_count = await self.db.users.count_documents({
+            "organization_id": organization_id,
+            "role": {"$in": ["org_admin", "hr_admin"]},
+            "is_active": True
+        })
+        
+        limit = org.get("admin_user_access_limit", 2)
+        remaining = max(0, limit - admin_count)
+        
+        return {
+            "limit": limit,
+            "current_count": admin_count,
+            "can_add_more": admin_count < limit,
+            "remaining": remaining
+        }
+    
     async def create_organization(self, data: OrganizationCreateRequest):
         """Create a new organization and org admin user"""
         logger.info(f"Creating organization: {data.org_name}")
@@ -78,6 +117,7 @@ class OrganizationService:
             org_name=data.org_name,
             email=data.email,
             emp_count_for_access=data.emp_count_for_access,
+            admin_user_access_limit=data.admin_user_access_limit,
             industry=data.industry,
             country=data.country,
             state=data.state,
