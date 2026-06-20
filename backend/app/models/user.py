@@ -17,6 +17,7 @@ class UserModel(BaseModel):
     # OTP fields for password reset
     password_reset_otp: Optional[str] = None
     password_reset_otp_expires_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     

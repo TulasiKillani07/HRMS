@@ -50,5 +50,5 @@ async def create_department(
     current_user: dict = Depends(get_current_user)
 ):
     service = DepartmentService(db)
-    department = await service.create_department(data)
+    department = await service.create_department(data, current_user)
     return department

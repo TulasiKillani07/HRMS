@@ -102,9 +102,15 @@ class AuthService:
                 {
                     "$set": {
                         "requires_password_change": False,
+                        "last_login": datetime.utcnow(),
                         "updated_at": datetime.utcnow()
                     }
                 }
+            )
+        else:
+            await self.db.users.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"last_login": datetime.utcnow(), "updated_at": datetime.utcnow()}}
             )
         
         # Create tokens

@@ -9,6 +9,7 @@ from app.v1.leaves.route import router as leaves_router
 from app.v1.payroll.route import router as payroll_router
 from app.v1.auth.route import router as auth_router
 from app.v1.organizations.route import router as organizations_router
+from app.v1.users.route import router as users_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -152,6 +153,7 @@ async def root():
 # Include routers
 app.include_router(auth_router, prefix=f"{settings.API_V1_PREFIX}/auth", tags=["Authentication"])
 app.include_router(organizations_router, prefix=f"{settings.API_V1_PREFIX}/organizations", tags=["Organizations"])
+app.include_router(users_router, prefix=f"{settings.API_V1_PREFIX}/users", tags=["User Management"])
 app.include_router(employees_router, prefix=f"{settings.API_V1_PREFIX}/employees", tags=["Employees"])
 app.include_router(departments_router, prefix=f"{settings.API_V1_PREFIX}/departments", tags=["Departments"])
 app.include_router(attendance_router, prefix=f"{settings.API_V1_PREFIX}/attendance", tags=["Attendance"])
