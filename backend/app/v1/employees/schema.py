@@ -37,11 +37,7 @@ class EmployeeCreateRequest(BaseModel):
     salary_structure: SalaryStructureSchema
     is_fresher: bool = Field(
         ...,
-        description="true = fresher (no prior experience), false = experienced"
-    )
-    uan_number: Optional[str] = Field(
-        None,
-        description="UAN from EPFO — required if is_fresher is false"
+        description="true = fresher (no prior experience), false = experienced. UAN will be collected during government_ids onboarding section."
     )
 
     class Config:
@@ -60,7 +56,6 @@ class EmployeeCreateRequest(BaseModel):
                 "shift": "General",
                 "work_location": "Hyderabad Office",
                 "is_fresher": False,
-                "uan_number": "100123456789",
                 "salary_structure": {
                     "basic": 50000,
                     "hra": 20000,
@@ -116,6 +111,7 @@ class EmployeeListItem(BaseModel):
     status: str
     onboarding_progress: int
     joining_date: str
+    is_fresher: Optional[bool] = None
     created_at: datetime
 
 
@@ -242,7 +238,7 @@ class GovernmentIDsRequest(BaseModel):
     passport: Optional[GovIDEntryRequest] = None
     uan: Optional[GovIDEntryRequest] = Field(
         None,
-        description="Universal Account Number (EPFO) — required if employee is experienced (is_fresher: false)"
+        description="Universal Account Number (EPFO) — optional for all employees"
     )
 
     class Config:
@@ -384,8 +380,7 @@ class OnboardingSectionInfo(BaseModel):
 class OnboardingProgressResponse(BaseModel):
     status: str
     progress: int
-    is_fresher: Optional[bool] = None    # frontend uses this to show/hide experience section
-    uan_number: Optional[str] = None     # present if experienced
+    is_fresher: Optional[bool] = None    # frontend uses this to show/hide experience section and UAN requirement
     sections: Dict[str, Any]
     hr_notes: Optional[str] = None
 

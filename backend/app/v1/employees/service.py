@@ -110,12 +110,8 @@ class EmployeeService:
         Returns (employee_dict, invite_sent).
         Raises HTTPException on validation errors.
         """
-        # Validate UAN for experienced employees
-        if not data.get("is_fresher") and not data.get("uan_number"):
-            raise HTTPException(
-                status_code=400,
-                detail="uan_number is required for experienced employees (is_fresher: false)"
-            )
+        # Note: UAN is now optional - collected during onboarding in government_ids section
+        # No validation needed here
 
         # Duplicate checks
         dup_id = await self.db.employees.find_one({
@@ -481,7 +477,7 @@ class EmployeeService:
                     "id": 1, "employee_id": 1, "first_name": 1, "last_name": 1,
                     "official_email": 1, "phone": 1, "department": 1,
                     "designation": 1, "status": 1, "onboarding_progress": 1,
-                    "joining_date": 1, "created_at": 1
+                    "joining_date": 1, "is_fresher": 1, "created_at": 1
                 }
             )
             .skip(skip).limit(limit).sort("created_at", -1)
@@ -629,16 +625,8 @@ class EmployeeService:
                 )
             section_data["accepted_at"] = datetime.utcnow().isoformat()
 
-        # Special validation for government_ids — UAN required if experienced
-        if section == "government_ids":
-            is_fresher = emp.get("is_fresher")
-            if not is_fresher:
-                uan = section_data.get("uan") or {}
-                if not uan.get("number"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="UAN number is required for experienced employees under government IDs"
-                    )
+        # Special validation for government_ids — UAN is now optional for all employees
+        # (Previously required for experienced employees, now made optional as per requirement)
 
         # Special validation for experience — use is_fresher stored at creation
         if section == "experience":

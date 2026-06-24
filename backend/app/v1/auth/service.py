@@ -12,6 +12,7 @@ from app.core.security import (
 )
 from app.utils.validators import validate_password_strength
 from app.utils.notifications import send_password_reset_otp, send_password_reset_success
+from app.utils.logger import logger
 from app.v1.auth.schema import (
     RegisterRequest,
     LoginRequest,
@@ -32,6 +33,7 @@ class AuthService:
         # Check if user already exists
         existing_user = await self.db.users.find_one({"email": data.email})
         if existing_user:
+            logger.warning(f"Registration failed: Email already exists - {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
@@ -44,6 +46,7 @@ class AuthService:
         if data.password:
             is_valid, error_msg = validate_password_strength(password)
             if not is_valid:
+                logger.warning(f"Registration failed: Weak password for {data.email}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=error_msg
@@ -66,6 +69,7 @@ class AuthService:
         user_dict = user_model.model_dump()
         user_dict["_id"] = str(result.inserted_id)
         
+        logger.info(f"User registered successfully: {data.email} (role: {data.role})")
         return user_dict
     
     async def login_user(self, data: LoginRequest):
@@ -73,6 +77,7 @@ class AuthService:
         # Find user
         user = await self.db.users.find_one({"email": data.email})
         if not user:
+            logger.warning(f"Login failed: Invalid email - {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials"
@@ -80,6 +85,7 @@ class AuthService:
         
         # Verify password
         if not verify_password(data.password, user["hashed_password"]):
+            logger.warning(f"Login failed: Invalid password for {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials"
@@ -87,6 +93,7 @@ class AuthService:
         
         # Check if user is active
         if not user.get("is_active", True):
+            logger.warning(f"Login failed: Account inactive - {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account is inactive"
@@ -117,6 +124,8 @@ class AuthService:
         access_token = create_access_token({"sub": str(user["_id"])})
         refresh_token = create_refresh_token({"sub": str(user["_id"])})
         
+        logger.info(f"User logged in successfully: {data.email} (role: {user['role']})")
+        
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
@@ -129,6 +138,7 @@ class AuthService:
         payload = decode_token(refresh_token)
         
         if payload is None or payload.get("type") != "refresh":
+            logger.warning("Token refresh failed: Invalid refresh token")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid refresh token"
@@ -138,6 +148,7 @@ class AuthService:
         user = await self.db.users.find_one({"_id": user_id})
         
         if not user:
+            logger.warning(f"Token refresh failed: User not found - {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found"
@@ -145,6 +156,8 @@ class AuthService:
         
         # Create new access token
         access_token = create_access_token({"sub": str(user["_id"])})
+        
+        logger.info(f"Access token refreshed for user: {user['email']}")
         
         return {
             "access_token": access_token,
@@ -164,6 +177,7 @@ class AuthService:
         
         if not user:
             # Don't reveal if email exists or not (security best practice)
+            logger.warning(f"Forgot password request for non-existent email: {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="If this email exists, an OTP has been sent"
@@ -171,6 +185,7 @@ class AuthService:
         
         # Check if user is active
         if not user.get("is_active", True):
+            logger.warning(f"Forgot password request for inactive account: {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account is inactive. Please contact support."
@@ -200,6 +215,8 @@ class AuthService:
             full_name=user["full_name"],
             otp=otp
         )
+        
+        logger.info(f"Password reset OTP sent to: {data.email}")
         
         return {
             "message": "OTP sent to your email address",
@@ -237,11 +254,13 @@ class AuthService:
         
         # Verify OTP
         if user["password_reset_otp"] != data.otp:
+            logger.warning(f"OTP verification failed for: {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid OTP"
             )
         
+        logger.info(f"OTP verified successfully for: {data.email}")
         return {
             "message": "OTP verified successfully",
             "email": user["email"]
@@ -277,6 +296,7 @@ class AuthService:
         
         # Verify OTP
         if user["password_reset_otp"] != data.otp:
+            logger.warning(f"Password reset failed: Invalid OTP for {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid OTP"
@@ -285,6 +305,7 @@ class AuthService:
         # Validate new password strength
         is_valid, error_msg = validate_password_strength(data.new_password)
         if not is_valid:
+            logger.warning(f"Password reset failed: Weak password for {data.email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_msg
@@ -315,6 +336,8 @@ class AuthService:
             full_name=user["full_name"]
         )
         
+        logger.info(f"Password reset successfully for: {data.email}")
+        
         return {
             "message": "Password reset successfully",
             "email": user["email"]
@@ -335,6 +358,7 @@ class AuthService:
         
         # Verify old password
         if not verify_password(data.old_password, user["hashed_password"]):
+            logger.warning(f"Password change failed: Incorrect old password for user {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Current password is incorrect"
@@ -343,6 +367,7 @@ class AuthService:
         # Validate new password strength
         is_valid, error_msg = validate_password_strength(data.new_password)
         if not is_valid:
+            logger.warning(f"Password change failed: Weak password for user {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_msg
@@ -350,6 +375,7 @@ class AuthService:
         
         # Check if new password is same as old password
         if verify_password(data.new_password, user["hashed_password"]):
+            logger.warning(f"Password change failed: New password same as old for user {user_id}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="New password must be different from current password"
@@ -369,6 +395,8 @@ class AuthService:
                 }
             }
         )
+        
+        logger.info(f"Password changed successfully for user: {user['email']}")
         
         return {
             "message": "Password changed successfully",

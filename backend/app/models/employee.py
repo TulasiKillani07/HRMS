@@ -62,7 +62,7 @@ class GovernmentIDs(BaseModel):
     pan: Optional[GovernmentIDEntry] = None
     aadhaar: Optional[GovernmentIDEntry] = None
     passport: Optional[GovernmentIDEntry] = None
-    uan: Optional[GovernmentIDEntry] = None      # UAN from EPFO — required if experienced
+    uan: Optional[GovernmentIDEntry] = None      # UAN from EPFO — optional for all employees
 
 
 class EducationEntry(BaseModel):
@@ -153,6 +153,8 @@ class EmployeeModel(BaseModel):
     shift: Optional[str] = None
     work_location: Optional[str] = None
     salary_structure: SalaryStructure
+    is_fresher: Optional[bool] = None            # true = fresher, false = experienced
+    uan_number: Optional[str] = None             # UAN number if experienced (deprecated, now collected in government_ids)
 
     # Status & onboarding
     status: str = "pending_onboarding"

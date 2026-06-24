@@ -11,6 +11,7 @@ from app.v1.auth.route import router as auth_router
 from app.v1.organizations.route import router as organizations_router
 from app.v1.users.route import router as users_router
 from app.v1.upload.route import router as upload_router
+from app.v1.performance.route import router as performance_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -130,6 +131,7 @@ app.include_router(auth_router, prefix=f"{settings.API_V1_PREFIX}/auth", tags=["
 app.include_router(organizations_router, prefix=f"{settings.API_V1_PREFIX}/organizations", tags=["Organizations"])
 app.include_router(users_router, prefix=f"{settings.API_V1_PREFIX}/users", tags=["User Management"])
 app.include_router(upload_router, prefix=f"{settings.API_V1_PREFIX}/upload", tags=["File Upload"])
+app.include_router(performance_router, prefix=f"{settings.API_V1_PREFIX}/performance", tags=["Performance & OKRs"])
 app.include_router(employees_router, prefix=f"{settings.API_V1_PREFIX}/employees", tags=["Employees"])
 app.include_router(departments_router, prefix=f"{settings.API_V1_PREFIX}/departments", tags=["Departments"])
 app.include_router(attendance_router, prefix=f"{settings.API_V1_PREFIX}/attendance", tags=["Attendance"])

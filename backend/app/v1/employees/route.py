@@ -69,7 +69,6 @@ a welcome email with login credentials and onboarding instructions.
   "shift": "General",
   "work_location": "Hyderabad Office",
   "is_fresher": false,
-  "uan_number": "100123456789",
   "salary_structure": {
     "basic": 50000,
     "hra": 20000,
@@ -110,8 +109,7 @@ a welcome email with login credentials and onboarding instructions.
 | designation | ✅ | Job title |
 | joining_date | ✅ | Format: YYYY-MM-DD |
 | salary_structure.basic, .ctc | ✅ | |
-| is_fresher | ✅ | `true` = fresher, `false` = has prior work experience |
-| uan_number | ❌ | **Required if `is_fresher: false`** — UAN from EPFO |
+| is_fresher | ✅ | `true` = fresher, `false` = has prior work experience. **UAN will be collected in government_ids onboarding section** |
 | reporting_manager | ❌ | Manager name |
 | shift, work_location | ❌ | |
 | employment_type | ❌ | `full-time` (default) / `part-time` / `contract` |
@@ -417,7 +415,7 @@ When all 9 sections are completed, status auto-changes to `onboarding_in_progres
 | `address` | Current address + permanent address |
 | `emergency_contact` | Emergency contact name, relation, phone |
 | `bank_details` | ⚠️ Critical — Account number, IFSC, bank name |
-| `government_ids` | ⚠️ Critical — PAN, Aadhaar, Passport, UAN (UAN required if experienced) |
+| `government_ids` | ⚠️ Critical — PAN, Aadhaar, Passport, UAN (all optional) |
 | `education` | List of degrees with institution, year, grade |
 | `experience` | List of past jobs with company, dates |
 | `documents` | List of uploaded documents (Cloudinary URLs) |
@@ -464,7 +462,7 @@ before the employee can be approved/activated.
   }
 }
 ```
-> ℹ️ `uan.number` is **required** if employee was created with `is_fresher: false` (experienced).
+> ℹ️ All government IDs including `uan` are **optional**. The `is_fresher` field helps frontend show/hide UAN field as needed.
 
 **education:**
 ```json
@@ -487,9 +485,9 @@ before the employee can be approved/activated.
   }
 }
 ```
-> ℹ️ `is_fresher` and `uan_number` are captured at creation by HR — employee does not need to provide them here.
-> - **Experienced** (`is_fresher: false`) → at least 1 entry required
-> - **Fresher** (`is_fresher: true`) → send `"entries": []`
+> ℹ️ `is_fresher` flag (set during creation by HR):
+> - **Experienced** (`is_fresher: false`) → at least 1 experience entry required. UAN is optional.
+> - **Fresher** (`is_fresher: true`) → send `"entries": []` (empty array). UAN is optional.
 
 **documents:**
 ```json
@@ -574,7 +572,6 @@ Frontend uses the `is_fresher` flag from this response to show or hide the exper
   "status": "onboarding_in_progress",
   "progress": 78,
   "is_fresher": false,
-  "uan_number": "100123456789",
   "sections": {
     "personal_details":  { "status": "completed", "verified": true },
     "address":           { "status": "completed", "verified": false },
@@ -591,9 +588,8 @@ Frontend uses the `is_fresher` flag from this response to show or hide the exper
 ```
 
 **`is_fresher` flag — frontend logic:**
-- `is_fresher: true` → hide experience section (fresher, no prior jobs)
-- `is_fresher: false` → show experience section, at least 1 entry required
-- `uan_number` → display on profile if experienced
+- `is_fresher: true` → hide experience section (fresher, no prior jobs). UAN is optional.
+- `is_fresher: false` → show experience section, at least 1 entry required. UAN is optional.
 
 **Section status values:**
 - `pending` — not yet submitted
