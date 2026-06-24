@@ -1,471 +1,331 @@
-from fastapi import APIRouter, Depends, Query, Path, status
-from typing import List
+from fastapi import APIRouter, Depends, Query, Path, status, HTTPException
 from app.database import get_database
 from app.core.dependencies import get_current_user
 from app.v1.organizations.schema import (
-    OrganizationCreateRequest,
-    OrganizationUpdateRequest,
-    OrganizationResponse
+    OrganizationCreateRequest, OrganizationUpdateRequest, OrganizationResponse
 )
 from app.v1.organizations.service import OrganizationService
 
 router = APIRouter()
 
-def check_superadmin(current_user: dict = Depends(get_current_user)):
-    """Check if current user is superadmin"""
+
+def _require_superadmin(current_user: dict = Depends(get_current_user)):
     if current_user.get("role") != "superadmin":
-        from fastapi import HTTPException, status
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only superadmin can perform this action"
-        )
+        raise HTTPException(status_code=403, detail="Only superadmin can perform this action")
     return current_user
+
 
 @router.post(
     "/",
     response_model=OrganizationResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create New Organization",
+    summary="Create Organization",
     description="""
-    **Purpose:** Create a new organization with automatic admin user setup
-    
-    **Access:** Superadmin only
-    
-    **Details:**
-    - Creates organization in database
-    - Automatically creates org_admin user account
-    - Generates secure temporary password
-    - Sends invitation email to admin with credentials
-    - Sends welcome email to organization
-    - Sends SMS notification to admin
-    - Links admin user to organization
-    - Sets admin user access limit (default: 2)
-    
-    **🎭 Roles & Access Limits:**
-    
-    The system has 4 roles with 2 separate access limits:
-    
-    **Admin Users (Limited by `admin_user_access_limit`):**
-    1. **`org_admin`** - Organization Administrator
-       - Full organization access
-       - Auto-created with this endpoint (counts as 1)
-       - Can manage departments, employees, hr_admins
-       
-    2. **`hr_admin`** - HR Administrator
-       - HR operations access
-       - Created by org_admin
-       - Manages payroll, attendance, leaves
-    
-    **Regular Users (Limited by `emp_count_for_access`):**
-    3. **`employee`** - Regular Employee
-       - Self-service access
-       - Apply leave, mark attendance, view payslips
-    
-    **System Level (No Limit):**
-    4. **`superadmin`** - System Administrator
-       - Full system access
-       - Not tied to organizations
-    
-    **Access Limits:**
-    - **`emp_count_for_access`**: Maximum number of employees allowed
-    - **`admin_user_access_limit`**: Maximum number of admin users (org_admin + hr_admin) allowed (default: 2)
-    
-    **Example Scenario:**
-    ```
-    Create organization with:
-    - emp_count_for_access: 100 (can add 100 employees)
-    - admin_user_access_limit: 3 (can have 3 admin users total)
-    
-    After creation:
-    - 1 org_admin created automatically
-    - Can add 2 more admin users (org_admin or hr_admin)
-    - Can add 100 employees
-    ```
-    
-    **Actions Performed:**
-    1. Validates organization email (must be unique)
-    2. Validates admin email (must be unique)
-    3. Creates org_admin user with default password **"Welcome1"**
-    4. Creates organization record with access limits
-    5. Links user and organization
-    6. Sends email & SMS notifications
-    
-    **Admin User Created With:**
-    - Email: admin_email from request
-    - Password: **"Welcome1"** (default, always)
-    - Role: org_admin
-    - requires_password_change: true
-    
-    **Request Example:**
-    ```json
-    {
-      "org_name": "Tech Solutions Inc",
-      "email": "contact@techsolutions.com",
-      "emp_count_for_access": 100,
-      "admin_user_access_limit": 2,
-      "industry": "Information Technology",
-      "country": "India",
-      "state": "Karnataka",
-      "admin_name": "Rajesh Kumar",
-      "admin_email": "admin@techsolutions.com",
-      "admin_phone": "+919876543210",
-      "org_address": "123 MG Road, Bangalore"
-    }
-    ```
-    
-    **Response:**
-    - Returns organization details
-    - Includes `temp_admin_password: "Welcome1"` in response
-    - notification_sent flag indicates success
-    
-    **Check Admin User Limit:**
-    After creation, use `GET /organizations/{org_id}/admin-user-limit` to check:
-    - Current count of admin users
-    - Remaining slots available
-    - Whether more admin users can be added
-    """,
-    responses={
-        201: {"description": "Organization created successfully with admin user"},
-        400: {"description": "Validation error, duplicate email, or invalid data"},
-        401: {"description": "Not authenticated"},
-        403: {"description": "User is not superadmin"},
-        422: {"description": "Invalid request format"}
-    }
+**Purpose:** Create a new organization. Automatically creates an `org_admin` user account
+and sends them a welcome email with login credentials.
+
+**Access:** `superadmin` only.
+
+**Request Body:**
+```json
+{
+  "org_name": "Tech Solutions India",
+  "email": "contact@techsolutions.com",
+  "emp_count_for_access": 100,
+  "admin_user_access_limit": 3,
+  "industry": "Information Technology",
+  "country": "India",
+  "state": "Karnataka",
+  "admin_name": "Rajesh Kumar",
+  "admin_email": "rajesh@techsolutions.com",
+  "admin_phone": "+919876543210",
+  "org_address": "123 MG Road, Bangalore"
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| org_name | ✅ | |
+| email | ✅ | Organization contact email, must be unique |
+| emp_count_for_access | ✅ | Max employees allowed (e.g. 50, 100, 500) |
+| admin_user_access_limit | ❌ | Max org_admin + hr_admin allowed. Default: 2 |
+| industry | ✅ | |
+| country, state | ✅ | |
+| admin_name, admin_email, admin_phone | ✅ | org_admin contact details |
+| org_address | ❌ | |
+
+**What happens automatically:**
+1. Organization record created
+2. `org_admin` user created with password `Welcome1`
+3. Welcome email sent to `admin_email` with login credentials
+4. Welcome email sent to org `email`
+
+**Response 201:**
+```json
+{
+  "id": "65abc...",
+  "org_name": "Tech Solutions India",
+  "status": "active",
+  "emp_count_for_access": 100,
+  "admin_user_access_limit": 3,
+  "temp_admin_password": "Welcome1",
+  "notification_sent": true,
+  ...
+}
+```
+
+**Errors:**
+- `400` — Organization email or admin email already exists
+- `403` — Not superadmin
+""",
 )
 async def create_organization(
     data: OrganizationCreateRequest,
     db=Depends(get_database),
-    current_user: dict = Depends(check_superadmin)
+    current_user: dict = Depends(_require_superadmin)
 ):
-    service = OrganizationService(db)
-    organization = await service.create_organization(data)
-    return organization
+    return await OrganizationService(db).create_organization(data)
+
 
 @router.get(
     "/",
     response_model=dict,
-    summary="Get All Organizations",
+    summary="List All Organizations",
     description="""
-    **Purpose:** Retrieve paginated list of organizations
-    
-    **Access:** Superadmin only
-    
-    **Details:**
-    - Returns paginated list of organizations
-    - By default excludes soft-deleted organizations
-    - Supports pagination with page and limit parameters
-    - Option to include deleted organizations
-    
-    **Query Parameters:**
-    - page: Page number (default: 1, min: 1)
-    - limit: Items per page (default: 10, min: 1, max: 100)
-    - include_deleted: Show deleted orgs (default: false)
-    
-    **Response:**
-    - organizations: Array of organization objects
-    - total: Total count of organizations
-    - page: Current page number
-    - limit: Items per page
-    - pages: Total number of pages
-    """,
-    responses={
-        200: {"description": "List of organizations retrieved successfully"},
-        401: {"description": "Not authenticated"},
-        403: {"description": "User is not superadmin"}
-    }
+**Purpose:** Get a paginated list of all organizations in the system.
+
+**Access:** `superadmin` only.
+
+**Query Parameters:**
+| Param | Type | Default | Description |
+|---|---|---|---|
+| page | int | 1 | Page number |
+| limit | int | 10 | Items per page (max 100) |
+| include_deleted | bool | false | Show soft-deleted organizations too |
+
+**Response 200:**
+```json
+{
+  "organizations": [ { "id": "...", "org_name": "...", "status": "active", ... } ],
+  "total": 25,
+  "page": 1,
+  "limit": 10,
+  "pages": 3
+}
+```
+
+**Errors:**
+- `403` — Not superadmin
+""",
 )
 async def get_organizations(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(10, ge=1, le=100, description="Items per page"),
-    include_deleted: bool = Query(False, description="Include deleted organizations"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+    include_deleted: bool = Query(False),
     db=Depends(get_database),
-    current_user: dict = Depends(check_superadmin)
+    current_user: dict = Depends(_require_superadmin)
 ):
-    service = OrganizationService(db)
-    result = await service.get_organizations(page, limit, include_deleted)
-    return result
+    return await OrganizationService(db).get_organizations(page, limit, include_deleted)
+
+
+@router.get(
+    "/me",
+    response_model=OrganizationResponse,
+    summary="Get My Organization",
+    description="""
+**Purpose:** Get the organization details for the currently logged-in admin.
+
+**Access:** `org_admin`, `hr_admin` — returns their own organization automatically.
+
+**Request Body:** None — organization is inferred from the user's token.
+
+**Response 200:**
+```json
+{
+  "id": "65abc...",
+  "org_name": "Tech Solutions India",
+  "email": "contact@techsolutions.com",
+  "emp_count_for_access": 100,
+  "admin_user_access_limit": 3,
+  "industry": "Information Technology",
+  "status": "active",
+  ...
+}
+```
+
+**Errors:**
+- `403` — User is not org_admin or hr_admin
+- `404` — User is not linked to any organization
+""",
+)
+async def get_my_organization(
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    role = current_user.get("role")
+    if role not in ["org_admin", "hr_admin"]:
+        raise HTTPException(status_code=403, detail="Only org_admin and hr_admin can view organization details")
+    org_id = current_user.get("organization_id")
+    if not org_id:
+        raise HTTPException(status_code=404, detail="User is not assigned to any organization")
+    return await OrganizationService(db).get_organization_by_id(org_id)
+
 
 @router.get(
     "/{org_id}",
     response_model=OrganizationResponse,
     summary="Get Organization by ID",
     description="""
-    **Purpose:** Retrieve detailed information about a specific organization
-    
-    **Access:** Superadmin only
-    
-    **Details:**
-    - Returns complete organization details
-    - Validates organization ID format (MongoDB ObjectId)
-    - Excludes soft-deleted organizations
-    - Includes admin user reference
-    
-    **Path Parameters:**
-    - org_id: Organization MongoDB ObjectId
-    
-    **Response:**
-    - Complete organization details
-    - Organization name, email, industry, location
-    - Admin information
-    - Status and metadata
-    """,
-    responses={
-        200: {"description": "Organization details retrieved successfully"},
-        400: {"description": "Invalid organization ID format"},
-        401: {"description": "Not authenticated"},
-        403: {"description": "User is not superadmin"},
-        404: {"description": "Organization not found or deleted"}
-    }
+**Purpose:** Get full details of a specific organization by its ID.
+
+**Access:** `superadmin` only.
+
+**Path Parameter:** `org_id` — MongoDB ObjectId of the organization.
+
+**Response 200:**
+```json
+{
+  "id": "65abc...",
+  "org_name": "Tech Solutions India",
+  "email": "contact@techsolutions.com",
+  "emp_count_for_access": 100,
+  "admin_user_access_limit": 3,
+  "admin_name": "Rajesh Kumar",
+  "admin_email": "rajesh@techsolutions.com",
+  "status": "active",
+  "is_deleted": false,
+  ...
+}
+```
+
+**Errors:**
+- `400` — Invalid org_id format
+- `403` — Not superadmin
+- `404` — Organization not found or deleted
+""",
 )
 async def get_organization(
-    org_id: str = Path(..., description="Organization ID"),
+    org_id: str = Path(..., description="Organization MongoDB ObjectId"),
     db=Depends(get_database),
-    current_user: dict = Depends(check_superadmin)
+    current_user: dict = Depends(_require_superadmin)
 ):
-    service = OrganizationService(db)
-    organization = await service.get_organization_by_id(org_id)
-    return organization
+    return await OrganizationService(db).get_organization_by_id(org_id)
+
 
 @router.put(
     "/{org_id}",
     response_model=OrganizationResponse,
     summary="Update Organization",
     description="""
-    **Purpose:** Update organization details and sync admin information
-    
-    **Access:** Superadmin only
-    
-    **Details:**
-    - Partial updates supported (send only fields to update)
-    - Validates unique email if changed
-    - Syncs admin details to users collection
-    - Updates admin name, email, phone in user record
-    
-    **Path Parameters:**
-    - org_id: Organization MongoDB ObjectId
-    
-    **Request Body (All fields optional):**
-    - org_name: Organization name
-    - email: Organization email (must be unique)
-    - emp_count_for_access: Employee limit
-    - industry, country, state: Location details
-    - admin_name, admin_email, admin_phone: Admin info
-    - org_address: Organization address
-    - status: active or inactive
-    
-    **Sync Behavior:**
-    - Changing admin_email updates user's email
-    - Changing admin_name updates user's full_name
-    - Changing admin_phone updates user's phone
-    """,
-    responses={
-        200: {"description": "Organization updated successfully"},
-        400: {"description": "Validation error or duplicate email"},
-        401: {"description": "Not authenticated"},
-        403: {"description": "User is not superadmin"},
-        404: {"description": "Organization not found"}
-    }
+**Purpose:** Update organization details. All fields are optional — send only what needs changing.
+
+**Access:** `superadmin` only.
+
+**Path Parameter:** `org_id` — MongoDB ObjectId of the organization.
+
+**Request Body (all fields optional):**
+```json
+{
+  "org_name": "Tech Solutions India Pvt Ltd",
+  "emp_count_for_access": 200,
+  "admin_user_access_limit": 5,
+  "admin_name": "Rajesh Kumar",
+  "admin_email": "rajesh.new@techsolutions.com",
+  "admin_phone": "+919876543299",
+  "status": "active"
+}
+```
+
+**Sync behavior:** If `admin_email`, `admin_name`, or `admin_phone` is updated here,
+the linked org_admin user record is updated automatically.
+
+**Response 200:** Updated organization object.
+
+**Errors:**
+- `400` — Email already taken, no fields provided
+- `403` — Not superadmin
+- `404` — Organization not found
+""",
 )
 async def update_organization(
     data: OrganizationUpdateRequest,
-    org_id: str = Path(..., description="Organization ID"),
+    org_id: str = Path(..., description="Organization MongoDB ObjectId"),
     db=Depends(get_database),
-    current_user: dict = Depends(check_superadmin)
+    current_user: dict = Depends(_require_superadmin)
 ):
-    service = OrganizationService(db)
-    organization = await service.update_organization(org_id, data)
-    return organization
+    return await OrganizationService(db).update_organization(org_id, data)
+
 
 @router.delete(
     "/{org_id}",
     status_code=status.HTTP_200_OK,
-    summary="Soft Delete Organization",
+    summary="Delete Organization (Soft Delete)",
     description="""
-    **Purpose:** Soft delete organization and deactivate admin user
-    
-    **Access:** Superadmin only
-    
-    **Details:**
-    - Performs soft delete (data retained in database)
-    - Sets is_deleted=True on organization
-    - Sets status=inactive on organization
-    - Records deleted_at timestamp
-    - Deactivates admin user (is_active=False)
-    - Organization won't appear in default listings
-    
-    **Path Parameters:**
-    - org_id: Organization MongoDB ObjectId
-    
-    **Actions Performed:**
-    1. Validates organization exists and not already deleted
-    2. Sets is_deleted flag to True
-    3. Changes status to inactive
-    4. Records deletion timestamp
-    5. Deactivates linked admin user
-    
-    **Note:**
-    - This is a soft delete - data remains in database
-    - Can be included in queries with include_deleted=true
-    - Admin user cannot login after deletion
-    """,
-    responses={
-        200: {"description": "Organization soft deleted successfully"},
-        400: {"description": "Invalid organization ID format"},
-        401: {"description": "Not authenticated"},
-        403: {"description": "User is not superadmin"},
-        404: {"description": "Organization not found or already deleted"}
-    }
+**Purpose:** Soft delete an organization. Data is retained but the org and its admin are deactivated.
+
+**Access:** `superadmin` only.
+
+**Path Parameter:** `org_id` — MongoDB ObjectId of the organization.
+
+**Request Body:** None.
+
+**What happens:**
+- Organization: `is_deleted = true`, `status = inactive`
+- Linked org_admin user: `is_active = false` (cannot login)
+- Organization disappears from default list unless `include_deleted=true`
+
+**Response 200:**
+```json
+{ "message": "Organization deleted successfully" }
+```
+
+**Errors:**
+- `400` — Invalid org_id format
+- `403` — Not superadmin
+- `404` — Organization not found or already deleted
+""",
 )
 async def delete_organization(
-    org_id: str = Path(..., description="Organization ID"),
+    org_id: str = Path(..., description="Organization MongoDB ObjectId"),
     db=Depends(get_database),
-    current_user: dict = Depends(check_superadmin)
+    current_user: dict = Depends(_require_superadmin)
 ):
-    service = OrganizationService(db)
-    result = await service.soft_delete_organization(org_id)
-    return result
+    return await OrganizationService(db).soft_delete_organization(org_id)
+
 
 @router.get(
     "/{org_id}/admin-user-limit",
     response_model=dict,
-    summary="Check Admin User Access Limit",
+    summary="Check Admin User Limit",
     description="""
-    **Purpose:** Check how many admin users can be added to an organization
-    
-    **Access:** Superadmin only
-    
-    **Details:**
-    - Returns admin user limit for organization
-    - Shows current count of admin users (org_admin + hr_admin)
-    - Indicates if more admin users can be added
-    - Shows remaining slots
-    
-    **Path Parameters:**
-    - org_id: Organization MongoDB ObjectId
-    
-    **Response:**
-    - limit: Maximum admin users allowed (from admin_user_access_limit)
-    - current_count: Current number of active admin users
-    - can_add_more: Boolean indicating if more can be added
-    - remaining: Number of remaining slots
-    
-    **Use Case:**
-    - Check before creating new org_admin or hr_admin
-    - Validate if organization has reached its admin user quota
-    - Display available slots in frontend
-    
-    **Example Response:**
-    ```json
-    {
-      "limit": 2,
-      "current_count": 1,
-      "can_add_more": true,
-      "remaining": 1
-    }
-    ```
-    """,
-    responses={
-        200: {"description": "Admin user limit information retrieved"},
-        400: {"description": "Invalid organization ID format"},
-        401: {"description": "Not authenticated"},
-        403: {"description": "User is not superadmin"},
-        404: {"description": "Organization not found"}
-    }
+**Purpose:** Check how many admin slots (org_admin + hr_admin) are used vs available in an organization.
+
+**Access:** `superadmin` only.
+
+**Path Parameter:** `org_id` — MongoDB ObjectId of the organization.
+
+**Request Body:** None.
+
+**Response 200:**
+```json
+{
+  "limit": 3,
+  "current_count": 2,
+  "can_add_more": true,
+  "remaining": 1
+}
+```
+
+Use this before creating a new admin user to check if the org has capacity.
+
+**Errors:**
+- `403` — Not superadmin
+- `404` — Organization not found
+""",
 )
 async def check_admin_user_limit(
-    org_id: str = Path(..., description="Organization ID"),
+    org_id: str = Path(..., description="Organization MongoDB ObjectId"),
     db=Depends(get_database),
-    current_user: dict = Depends(check_superadmin)
+    current_user: dict = Depends(_require_superadmin)
 ):
-    service = OrganizationService(db)
-    result = await service.check_admin_user_limit(org_id)
-    return result
-
-@router.get(
-    "/me",
-    response_model=OrganizationResponse,
-    summary="Get My Organization Details",
-    description="""
-    **Purpose:** Get organization details for the current user's organization
-    
-    **Access:** org_admin, hr_admin
-    
-    **Details:**
-    - Returns organization details for the user's assigned organization
-    - org_admin and hr_admin can view their own organization
-    - Automatically uses organization_id from user's profile
-    - Cannot view other organizations
-    
-    **Use Cases:**
-    - Display company information in dashboard
-    - Show organization profile to admins
-    - View organization limits and settings
-    
-    **Response Includes:**
-    - Organization name, email, industry
-    - Employee access limit (emp_count_for_access)
-    - Admin user access limit (admin_user_access_limit)
-    - Organization address and contact details
-    - Admin information
-    - Organization status
-    
-    **Example Response:**
-    ```json
-    {
-      "id": "65abc123...",
-      "org_name": "Tech Solutions Inc",
-      "email": "contact@techsolutions.com",
-      "emp_count_for_access": 100,
-      "admin_user_access_limit": 2,
-      "industry": "Information Technology",
-      "country": "India",
-      "state": "Karnataka",
-      "admin_name": "Rajesh Kumar",
-      "admin_email": "admin@techsolutions.com",
-      "admin_phone": "+919876543210",
-      "org_address": "123 MG Road, Bangalore",
-      "status": "active",
-      ...
-    }
-    ```
-    
-    **Note:**
-    - User must have organization_id in their profile
-    - Only works for org_admin and hr_admin roles
-    - Returns 404 if organization not found or deleted
-    """,
-    responses={
-        200: {"description": "Organization details retrieved successfully"},
-        401: {"description": "Not authenticated"},
-        403: {"description": "User does not have permission (must be org_admin or hr_admin)"},
-        404: {"description": "Organization not found or user not assigned to any organization"}
-    }
-)
-async def get_my_organization(
-    current_user: dict = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    # Check if user is org_admin or hr_admin
-    user_role = current_user.get("role")
-    if user_role not in ["org_admin", "hr_admin"]:
-        from fastapi import HTTPException, status
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only org_admin and hr_admin can view organization details"
-        )
-    
-    # Get user's organization_id
-    org_id = current_user.get("organization_id")
-    if not org_id:
-        from fastapi import HTTPException, status
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User is not assigned to any organization"
-        )
-    
-    # Get organization details
-    service = OrganizationService(db)
-    organization = await service.get_organization_by_id(org_id)
-    return organization
-
-
+    return await OrganizationService(db).check_admin_user_limit(org_id)

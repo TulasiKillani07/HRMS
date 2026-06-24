@@ -1,32 +1,62 @@
+import io
+import csv
 from datetime import datetime
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, UploadFile
 from bson import ObjectId
 from app.database import get_database
-from app.models.employee import EmployeeModel
+from app.models.employee import (
+    EmployeeModel, SalaryStructure,
+    ONBOARDING_SECTIONS, CRITICAL_SECTIONS,
+    SectionStatus, default_onboarding_sections
+)
+from app.models.user import UserModel
+from app.core.security import get_password_hash
 from app.utils.helpers import paginate_query
 from app.utils.logger import logger
-from app.v1.employees.schema import EmployeeCreateRequest, EmployeeUpdateRequest
+from app.utils.notifications import (
+    send_employee_welcome_email,
+    send_onboarding_revision_email
+)
+from app.v1.employees.schema import (
+    EmployeeCreateRequest,
+    EmployeeUpdateRequest,
+    VerifyEmployeeRequest,
+)
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _serialize(emp: dict) -> dict:
+    emp["id"] = str(emp["_id"])
+    del emp["_id"]
+    return emp
+
+
+def _calc_progress(sections: dict) -> int:
+    if not sections:
+        return 0
+    completed = sum(
+        1 for s in sections.values()
+        if s.get("status") == "completed"
+    )
+    return round((completed / len(ONBOARDING_SECTIONS)) * 100)
+
+
+# ---------------------------------------------------------------------------
+# EmployeeService
+# ---------------------------------------------------------------------------
 
 class EmployeeService:
     def __init__(self, db=None):
         self.db = db if db is not None else get_database()
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Org resolution
     # ------------------------------------------------------------------
 
-    def _serialize(self, emp: dict) -> dict:
-        emp["id"] = str(emp["_id"])
-        del emp["_id"]
-        return emp
-
     def _org_id_from_user(self, current_user: dict, explicit_org_id: str = None) -> str:
-        """
-        Resolve organization_id:
-        - superadmin: uses explicit_org_id passed in (required)
-        - org_admin / hr_admin: uses organization_id from their profile
-        """
         role = current_user.get("role")
         if role == "superadmin":
             if not explicit_org_id:
@@ -43,17 +73,18 @@ class EmployeeService:
             )
         return org_id
 
+    # ------------------------------------------------------------------
+    # Employee limit check
+    # ------------------------------------------------------------------
+
     async def _check_emp_limit(self, org_id: str) -> None:
-        """Raise 403 if the org has hit its emp_count_for_access limit."""
         org = await self.db.organizations.find_one(
             {"_id": ObjectId(org_id), "is_deleted": False},
             {"emp_count_for_access": 1}
         )
         if not org:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Organization not found"
-            )
+            raise HTTPException(status_code=404, detail="Organization not found")
+
         limit = org.get("emp_count_for_access", 0)
         current_count = await self.db.employees.count_documents({
             "organization_id": org_id,
@@ -62,91 +93,354 @@ class EmployeeService:
         if current_count >= limit:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    f"Employee limit reached for this organization. "
-                    f"Limit: {limit}, Current: {current_count}"
-                )
+                detail=f"Employee limit reached. Limit: {limit}, Current: {current_count}"
             )
 
     # ------------------------------------------------------------------
-    # Create
+    # Internal: create one employee + user account
     # ------------------------------------------------------------------
 
-    async def create_employee(self, data: EmployeeCreateRequest, current_user: dict) -> dict:
-        org_id = self._org_id_from_user(current_user, data.organization_id)
+    async def _create_single_employee(
+        self,
+        org_id: str,
+        data: dict,
+        org_name: str
+    ) -> tuple[dict, bool]:
+        """
+        Returns (employee_dict, invite_sent).
+        Raises HTTPException on validation errors.
+        """
+        # Validate UAN for experienced employees
+        if not data.get("is_fresher") and not data.get("uan_number"):
+            raise HTTPException(
+                status_code=400,
+                detail="uan_number is required for experienced employees (is_fresher: false)"
+            )
 
-        # Check employee limit (exclude deleted)
-        await self._check_emp_limit(org_id)
-
-        # Unique employee_id within the org (exclude deleted)
-        existing_id = await self.db.employees.find_one({
-            "employee_id": data.employee_id,
+        # Duplicate checks
+        dup_id = await self.db.employees.find_one({
+            "employee_id": data["employee_id"],
             "organization_id": org_id,
             "is_deleted": False
         })
-        if existing_id:
+        if dup_id:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Employee ID already exists in this organization"
+                status_code=400,
+                detail=f"Employee ID '{data['employee_id']}' already exists in this organization"
             )
 
-        # Unique email globally across active employees
-        existing_email = await self.db.employees.find_one({
-            "email": data.email,
+        dup_email = await self.db.employees.find_one({
+            "official_email": data["official_email"],
             "is_deleted": False
         })
-        if existing_email:
+        if dup_email:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already exists"
+                status_code=400,
+                detail=f"Email '{data['official_email']}' is already used by another employee"
             )
 
-        # Validate department belongs to same org (if provided)
-        if data.department_id:
-            dept = await self.db.departments.find_one({
-                "_id": ObjectId(data.department_id),
-                "organization_id": org_id,
-                "status": "active"
-            })
-            if not dept:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Department not found in your organization"
+        # Check users collection — covers org_admin, hr_admin, and existing employee accounts
+        dup_user = await self.db.users.find_one({"email": data["official_email"]})
+        if dup_user:
+            role = dup_user.get("role", "user")
+            role_label = {
+                "org_admin": "an Organization Admin",
+                "hr_admin": "an HR Admin",
+                "employee": "an existing employee",
+                "superadmin": "a Superadmin"
+            }.get(role, f"a {role}")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Email '{data['official_email']}' is already registered as {role_label}. "
+                    f"Each person must have a unique email across the entire system."
                 )
+            )
 
-        employee_model = EmployeeModel(
-            employee_id=data.employee_id,
+        # Create user account
+        temp_password = "Welcome1"
+        user_model = UserModel(
+            email=data["official_email"],
+            hashed_password=get_password_hash(temp_password),
+            full_name=f"{data['first_name']} {data['last_name']}",
+            role="employee",
+            phone=data.get("phone"),
+            is_active=True,
+            is_verified=False,
+            requires_password_change=True,
             organization_id=org_id,
-            first_name=data.first_name,
-            last_name=data.last_name,
-            email=data.email,
-            phone=data.phone,
-            date_of_birth=datetime.combine(data.date_of_birth, datetime.min.time()),
-            gender=data.gender,
-            address=data.address,
-            department_id=data.department_id,
-            designation=data.designation,
-            joining_date=datetime.combine(data.joining_date, datetime.min.time()),
-            employment_type=data.employment_type,
-            status="active",
-            salary=data.salary,
-            bank_account=data.bank_account,
-            emergency_contact=data.emergency_contact,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        user_result = await self.db.users.insert_one(user_model.model_dump())
+        user_id = str(user_result.inserted_id)
+
+        # Build salary structure
+        sal = data.get("salary_structure", {})
+        if isinstance(sal, dict):
+            salary_structure = SalaryStructure(
+                basic=sal.get("basic", 0),
+                hra=sal.get("hra", 0),
+                special_allowance=sal.get("special_allowance", 0),
+                ctc=sal.get("ctc", 0)
+            )
+        else:
+            salary_structure = sal  # already SalaryStructure instance
+
+        # Create employee record
+        emp_model = EmployeeModel(
+            organization_id=org_id,
+            employee_id=data["employee_id"],
+            user_id=user_id,
+            first_name=data["first_name"],
+            last_name=data["last_name"],
+            official_email=data["official_email"],
+            phone=data.get("phone", ""),
+            department=data.get("department", ""),
+            designation=data.get("designation", ""),
+            reporting_manager=data.get("reporting_manager"),
+            joining_date=data.get("joining_date", ""),
+            employment_type=data.get("employment_type", "full-time"),
+            shift=data.get("shift"),
+            work_location=data.get("work_location"),
+            salary_structure=salary_structure,
+            is_fresher=data.get("is_fresher"),
+            uan_number=data.get("uan_number") if not data.get("is_fresher") else None,
+            status="pending_onboarding",
+            onboarding_progress=0,
+            onboarding_sections=default_onboarding_sections(),
             is_deleted=False,
-            deleted_at=None,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
 
-        result = await self.db.employees.insert_one(employee_model.model_dump())
-        emp_dict = employee_model.model_dump()
-        emp_dict["id"] = str(result.inserted_id)
+        emp_result = await self.db.employees.insert_one(emp_model.model_dump())
+        emp_dict = emp_model.model_dump()
+        emp_dict["id"] = str(emp_result.inserted_id)
 
-        logger.info(f"Employee {data.employee_id} created in org {org_id} by {current_user.get('email')}")
-        return emp_dict
+        # Update user with employee reference
+        await self.db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"employee_id": emp_dict["id"], "updated_at": datetime.utcnow()}}
+        )
+
+        # Send welcome email
+        invite_sent = await send_employee_welcome_email(
+            email=data["official_email"],
+            first_name=data["first_name"],
+            org_name=org_name,
+            temp_password=temp_password
+        )
+
+        logger.info(
+            f"Employee {data['employee_id']} created in org {org_id}, "
+            f"user {user_id}, invite_sent={invite_sent}"
+        )
+        return emp_dict, invite_sent
 
     # ------------------------------------------------------------------
-    # List
+    # 1. Create employee (manual)
+    # ------------------------------------------------------------------
+
+    async def create_employee(
+        self, data: EmployeeCreateRequest, current_user: dict
+    ) -> dict:
+        org_id = self._org_id_from_user(current_user, data.organization_id)
+        await self._check_emp_limit(org_id)
+
+        org = await self.db.organizations.find_one(
+            {"_id": ObjectId(org_id)}, {"org_name": 1}
+        )
+        org_name = org.get("org_name", "Your Company") if org else "Your Company"
+
+        emp_dict, invite_sent = await self._create_single_employee(
+            org_id=org_id,
+            data=data.model_dump(),
+            org_name=org_name
+        )
+
+        return {
+            "id": emp_dict["id"],
+            "employee_id": emp_dict["employee_id"],
+            "status": emp_dict["status"],
+            "onboarding_progress": emp_dict["onboarding_progress"],
+            "invite_sent": invite_sent,
+            "created_at": emp_dict["created_at"]
+        }
+
+    # ------------------------------------------------------------------
+    # 2. CSV import
+    # ------------------------------------------------------------------
+
+    async def import_employees_csv(
+        self, file: UploadFile, current_user: dict
+    ) -> dict:
+        org_id = self._org_id_from_user(current_user, None
+                                        if current_user.get("role") != "superadmin"
+                                        else current_user.get("organization_id"))
+
+        org = await self.db.organizations.find_one(
+            {"_id": ObjectId(org_id)}, {"org_name": 1, "emp_count_for_access": 1}
+        )
+        org_name = org.get("org_name", "Your Company") if org else "Your Company"
+
+        # Read CSV content
+        content = await file.read()
+        try:
+            text = content.decode("utf-8-sig")   # handle BOM
+        except UnicodeDecodeError:
+            text = content.decode("latin-1")
+
+        reader = csv.DictReader(io.StringIO(text))
+
+        REQUIRED_COLS = {
+            "employee_id", "first_name", "last_name", "official_email",
+            "phone", "department", "designation", "joining_date", "ctc"
+        }
+
+        if not reader.fieldnames:
+            raise HTTPException(status_code=400, detail="CSV file is empty or has no headers")
+
+        missing_cols = REQUIRED_COLS - {c.strip().lower() for c in reader.fieldnames}
+        if missing_cols:
+            raise HTTPException(
+                status_code=400,
+                detail=f"CSV missing required columns: {missing_cols}"
+            )
+
+        imported = 0
+        errors = []
+
+        for row_num, row in enumerate(reader, start=2):  # row 1 is header
+            # Normalise keys
+            row = {k.strip().lower(): v.strip() for k, v in row.items() if k}
+
+            emp_id = row.get("employee_id", "").strip()
+            email = row.get("official_email", "").strip()
+
+            # Required field checks
+            missing = [f for f in REQUIRED_COLS if not row.get(f)]
+            if missing:
+                errors.append({
+                    "row": row_num,
+                    "employee_id": emp_id or None,
+                    "email": email or None,
+                    "error": f"Missing required fields: {missing}"
+                })
+                continue
+
+            # Basic email format check
+            if "@" not in email or "." not in email.split("@")[-1]:
+                errors.append({
+                    "row": row_num, "employee_id": emp_id, "email": email,
+                    "error": "Invalid email format"
+                })
+                continue
+
+            # Duplicate check
+            dup_id = await self.db.employees.find_one({
+                "employee_id": emp_id, "organization_id": org_id, "is_deleted": False
+            })
+            if dup_id:
+                errors.append({
+                    "row": row_num, "employee_id": emp_id, "email": email,
+                    "error": f"Duplicate: employee_id '{emp_id}' already exists"
+                })
+                continue
+
+            dup_email = await self.db.employees.find_one({
+                "official_email": email, "is_deleted": False
+            })
+            if dup_email:
+                errors.append({
+                    "row": row_num, "employee_id": emp_id, "email": email,
+                    "error": f"Duplicate: email '{email}' is already used by another employee"
+                })
+                continue
+
+            # Also check users collection (hr_admin, org_admin, etc.)
+            dup_user = await self.db.users.find_one({"email": email})
+            if dup_user:
+                role = dup_user.get("role", "user")
+                role_label = {
+                    "org_admin": "an Organization Admin",
+                    "hr_admin": "an HR Admin",
+                    "employee": "an existing employee",
+                    "superadmin": "a Superadmin"
+                }.get(role, f"a {role}")
+                errors.append({
+                    "row": row_num, "employee_id": emp_id, "email": email,
+                    "error": f"Email '{email}' is already registered as {role_label}"
+                })
+                continue
+
+            # CTC parse
+            try:
+                ctc = float(row.get("ctc", 0))
+            except ValueError:
+                errors.append({
+                    "row": row_num, "employee_id": emp_id, "email": email,
+                    "error": "Invalid CTC value"
+                })
+                continue
+
+            # Check remaining employee limit
+            current_count = await self.db.employees.count_documents({
+                "organization_id": org_id, "is_deleted": False
+            })
+            limit = org.get("emp_count_for_access", 0) if org else 0
+            if current_count >= limit:
+                errors.append({
+                    "row": row_num, "employee_id": emp_id, "email": email,
+                    "error": "Organization employee limit reached, stopping further imports"
+                })
+                # Stop processing further rows
+                break
+
+            try:
+                await self._create_single_employee(
+                    org_id=org_id,
+                    data={
+                        "employee_id": emp_id,
+                        "first_name": row.get("first_name", ""),
+                        "last_name": row.get("last_name", ""),
+                        "official_email": email,
+                        "phone": row.get("phone", ""),
+                        "department": row.get("department", ""),
+                        "designation": row.get("designation", ""),
+                        "reporting_manager": row.get("reporting_manager"),
+                        "joining_date": row.get("joining_date", ""),
+                        "employment_type": row.get("employment_type", "full-time"),
+                        "salary_structure": {
+                            "basic": ctc * 0.4,
+                            "hra": ctc * 0.2,
+                            "special_allowance": ctc * 0.15,
+                            "ctc": ctc
+                        }
+                    },
+                    org_name=org_name
+                )
+                imported += 1
+            except HTTPException as e:
+                errors.append({
+                    "row": row_num, "employee_id": emp_id, "email": email,
+                    "error": e.detail
+                })
+            except Exception as e:
+                errors.append({
+                    "row": row_num, "employee_id": emp_id, "email": email,
+                    "error": f"Unexpected error: {str(e)}"
+                })
+
+        logger.info(f"CSV import: {imported} imported, {len(errors)} failed for org {org_id}")
+        return {
+            "imported": imported,
+            "failed": len(errors),
+            "errors": errors
+        }
+
+    # ------------------------------------------------------------------
+    # 3. List employees
     # ------------------------------------------------------------------
 
     async def get_employees(
@@ -155,7 +449,7 @@ class EmployeeService:
         page: int = 1,
         limit: int = 10,
         status_filter: str = None,
-        department_id: str = None,
+        department: str = None,
         search: str = None,
         include_deleted: bool = False,
         organization_id: str = None
@@ -164,29 +458,37 @@ class EmployeeService:
         skip, limit = paginate_query(page, limit)
 
         query: dict = {"organization_id": org_id}
-
         if not include_deleted:
             query["is_deleted"] = False
-
         if status_filter:
             query["status"] = status_filter
-        if department_id:
-            query["department_id"] = department_id
+        if department:
+            query["department"] = {"$regex": department, "$options": "i"}
         if search:
             query["$or"] = [
-                {"first_name": {"$regex": search, "$options": "i"}},
-                {"last_name":  {"$regex": search, "$options": "i"}},
-                {"email":      {"$regex": search, "$options": "i"}},
-                {"employee_id":{"$regex": search, "$options": "i"}},
-                {"designation":{"$regex": search, "$options": "i"}},
+                {"first_name":  {"$regex": search, "$options": "i"}},
+                {"last_name":   {"$regex": search, "$options": "i"}},
+                {"official_email": {"$regex": search, "$options": "i"}},
+                {"employee_id": {"$regex": search, "$options": "i"}},
+                {"designation": {"$regex": search, "$options": "i"}},
             ]
 
         total = await self.db.employees.count_documents(query)
-        cursor = self.db.employees.find(query).skip(skip).limit(limit).sort("created_at", -1)
+        cursor = (
+            self.db.employees.find(
+                query,
+                {
+                    "id": 1, "employee_id": 1, "first_name": 1, "last_name": 1,
+                    "official_email": 1, "phone": 1, "department": 1,
+                    "designation": 1, "status": 1, "onboarding_progress": 1,
+                    "joining_date": 1, "created_at": 1
+                }
+            )
+            .skip(skip).limit(limit).sort("created_at", -1)
+        )
         employees = await cursor.to_list(length=limit)
-
         for emp in employees:
-            self._serialize(emp)
+            _serialize(emp)
 
         return {
             "employees": employees,
@@ -197,34 +499,43 @@ class EmployeeService:
         }
 
     # ------------------------------------------------------------------
-    # Get single
+    # 4. Get single employee (full profile)
     # ------------------------------------------------------------------
 
-    async def get_employee_by_id(self, employee_id: str, current_user: dict) -> dict:
+    async def get_employee_by_id(
+        self, employee_id: str, current_user: dict
+    ) -> dict:
         role = current_user.get("role")
 
         try:
-            query: dict = {"_id": ObjectId(employee_id), "is_deleted": False}
-            # Non-superadmin: restrict to their org
-            if role != "superadmin":
-                query["organization_id"] = self._org_id_from_user(current_user)
-            emp = await self.db.employees.find_one(query)
+            obj_id = ObjectId(employee_id)
         except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid employee ID format"
-            )
+            raise HTTPException(status_code=400, detail="Invalid employee ID format")
+
+        if role == "employee":
+            # Employee can only see their own record
+            emp = await self.db.employees.find_one({
+                "_id": obj_id,
+                "user_id": str(current_user["_id"]),
+                "is_deleted": False
+            })
+        elif role == "superadmin":
+            emp = await self.db.employees.find_one({"_id": obj_id, "is_deleted": False})
+        else:
+            org_id = self._org_id_from_user(current_user)
+            emp = await self.db.employees.find_one({
+                "_id": obj_id,
+                "organization_id": org_id,
+                "is_deleted": False
+            })
 
         if not emp:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee not found"
-            )
+            raise HTTPException(status_code=404, detail="Employee not found")
 
-        return self._serialize(emp)
+        return _serialize(emp)
 
     # ------------------------------------------------------------------
-    # Update
+    # 5. Update employee (HR fields)
     # ------------------------------------------------------------------
 
     async def update_employee(
@@ -233,109 +544,367 @@ class EmployeeService:
         role = current_user.get("role")
 
         try:
-            query: dict = {"_id": ObjectId(employee_id), "is_deleted": False}
-            if role != "superadmin":
-                query["organization_id"] = self._org_id_from_user(current_user)
-            emp = await self.db.employees.find_one(query)
+            obj_id = ObjectId(employee_id)
         except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid employee ID format"
-            )
+            raise HTTPException(status_code=400, detail="Invalid employee ID format")
 
+        query: dict = {"_id": obj_id, "is_deleted": False}
+        if role != "superadmin":
+            query["organization_id"] = self._org_id_from_user(current_user)
+
+        emp = await self.db.employees.find_one(query)
         if not emp:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee not found"
-            )
-
-        org_id = emp["organization_id"]  # always use the employee's actual org for dept validation
+            raise HTTPException(status_code=404, detail="Employee not found")
 
         update_data = data.model_dump(exclude_unset=True)
         if not update_data:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No fields provided to update"
-            )
+            raise HTTPException(status_code=400, detail="No fields provided to update")
 
-        # Email uniqueness if changed
-        if "email" in update_data and update_data["email"] != emp["email"]:
-            existing = await self.db.employees.find_one({"email": update_data["email"]})
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already exists"
-                )
-
-        # Validate department belongs to same org if changed
-        if "department_id" in update_data and update_data["department_id"]:
-            dept = await self.db.departments.find_one({
-                "_id": ObjectId(update_data["department_id"]),
-                "organization_id": org_id,
-                "status": "active"
-            })
-            if not dept:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Department not found in your organization"
-                )
-
-        # Validate status value
-        if "status" in update_data:
-            valid_statuses = {"active", "inactive", "terminated"}
-            if update_data["status"] not in valid_statuses:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid status. Must be one of: {valid_statuses}"
-                )
+        # Serialize nested salary_structure
+        if "salary_structure" in update_data and update_data["salary_structure"]:
+            update_data["salary_structure"] = update_data["salary_structure"]
 
         update_data["updated_at"] = datetime.utcnow()
-
-        await self.db.employees.update_one(
-            {"_id": ObjectId(employee_id)},
-            {"$set": update_data}
-        )
+        await self.db.employees.update_one({"_id": obj_id}, {"$set": update_data})
 
         logger.info(f"Employee {employee_id} updated by {current_user.get('email')}")
-
-        updated = await self.db.employees.find_one({"_id": ObjectId(employee_id)})
-        return self._serialize(updated)
+        updated = await self.db.employees.find_one({"_id": obj_id})
+        return _serialize(updated)
 
     # ------------------------------------------------------------------
-    # Soft delete
+    # 6. Submit onboarding section (employee self or HR on behalf)
+    # ------------------------------------------------------------------
+
+    async def submit_onboarding_section(
+        self,
+        section: str,
+        section_data: dict,
+        current_user: dict,
+        target_employee_id: str = None   # HR passes this; employee omits it
+    ) -> dict:
+        if section not in ONBOARDING_SECTIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid section. Must be one of: {ONBOARDING_SECTIONS}"
+            )
+
+        role = current_user.get("role")
+
+        # Resolve which employee record to update
+        if role == "employee":
+            # Employee always works on their own record
+            user_id = str(current_user["_id"])
+            emp = await self.db.employees.find_one({"user_id": user_id, "is_deleted": False})
+            if not emp:
+                raise HTTPException(status_code=404, detail="Employee record not found")
+        else:
+            # HR / org_admin / superadmin acting on behalf of a specific employee
+            if not target_employee_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="employee_id is required when HR fills onboarding on behalf of employee"
+                )
+            try:
+                obj_id = ObjectId(target_employee_id)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid employee ID format")
+
+            query: dict = {"_id": obj_id, "is_deleted": False}
+            if role != "superadmin":
+                query["organization_id"] = self._org_id_from_user(current_user)
+
+            emp = await self.db.employees.find_one(query)
+            if not emp:
+                raise HTTPException(status_code=404, detail="Employee not found")
+
+        if emp.get("status") == "inactive":
+            raise HTTPException(status_code=403, detail="Inactive employee cannot be updated")
+
+        # Special validation for policy_acceptance
+        if section == "policy_acceptance":
+            if not section_data.get("accepted"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="You must accept company policies to complete this section"
+                )
+            section_data["accepted_at"] = datetime.utcnow().isoformat()
+
+        # Special validation for government_ids — UAN required if experienced
+        if section == "government_ids":
+            is_fresher = emp.get("is_fresher")
+            if not is_fresher:
+                uan = section_data.get("uan") or {}
+                if not uan.get("number"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="UAN number is required for experienced employees under government IDs"
+                    )
+
+        # Special validation for experience — use is_fresher stored at creation
+        if section == "experience":
+            is_fresher = emp.get("is_fresher")
+            entries = section_data.get("entries") or []
+            if not is_fresher and len(entries) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="At least one experience entry is required for experienced employees"
+                )
+
+        # Get current onboarding sections
+        sections = emp.get("onboarding_sections", default_onboarding_sections())
+
+        # Update section
+        sec_obj = sections.get(section, SectionStatus().model_dump())
+        sec_obj["status"] = "completed"
+        sec_obj["verified"] = False  # Reset if resubmitting after needs_revision
+        sections[section] = sec_obj
+
+        # Calculate new progress
+        progress = _calc_progress(sections)
+
+        # Auto-advance status when all sections done
+        all_completed = all(s.get("status") == "completed" for s in sections.values())
+        new_status = emp.get("status")
+        if all_completed and new_status == "pending_onboarding":
+            new_status = "onboarding_in_progress"
+
+        filled_by = "hr" if role != "employee" else "employee"
+
+        update_fields: dict = {
+            f"onboarding_sections.{section}": sec_obj,
+            section: section_data,
+            "onboarding_progress": progress,
+            "status": new_status,
+            "updated_at": datetime.utcnow()
+        }
+
+        await self.db.employees.update_one(
+            {"_id": emp["_id"]},
+            {"$set": update_fields}
+        )
+
+        logger.info(
+            f"Section '{section}' submitted for employee {emp['employee_id']} "
+            f"by {filled_by} ({current_user.get('email')}), progress={progress}%"
+        )
+        return {
+            "section": section,
+            "status": "completed",
+            "overall_progress": progress,
+            "filled_by": filled_by
+        }
+
+    # ------------------------------------------------------------------
+    # 7. Get my onboarding progress (employee)
+    # ------------------------------------------------------------------
+
+    async def get_my_onboarding(self, current_user: dict, target_employee_id: str = None) -> dict:
+        role = current_user.get("role")
+
+        if role == "employee":
+            user_id = str(current_user["_id"])
+            emp = await self.db.employees.find_one(
+                {"user_id": user_id, "is_deleted": False},
+                {"status": 1, "onboarding_progress": 1, "onboarding_sections": 1,
+                 "hr_notes": 1, "is_fresher": 1, "uan_number": 1}
+            )
+        else:
+            try:
+                obj_id = ObjectId(target_employee_id)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid employee ID format")
+            query: dict = {"_id": obj_id, "is_deleted": False}
+            if role != "superadmin":
+                query["organization_id"] = self._org_id_from_user(current_user)
+            emp = await self.db.employees.find_one(
+                query,
+                {"status": 1, "onboarding_progress": 1, "onboarding_sections": 1,
+                 "hr_notes": 1, "is_fresher": 1, "uan_number": 1}
+            )
+
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee record not found")
+
+        return {
+            "status": emp.get("status"),
+            "progress": emp.get("onboarding_progress", 0),
+            "is_fresher": emp.get("is_fresher"),           # frontend uses this to show/hide experience section
+            "uan_number": emp.get("uan_number"),           # show UAN if experienced
+            "sections": emp.get("onboarding_sections", default_onboarding_sections()),
+            "hr_notes": emp.get("hr_notes")
+        }
+
+    # ------------------------------------------------------------------
+    # 8. Verify / Approve employee (HR)
+    # ------------------------------------------------------------------
+
+    async def verify_employee(
+        self,
+        employee_id: str,
+        data: VerifyEmployeeRequest,
+        current_user: dict
+    ) -> dict:
+        role = current_user.get("role")
+
+        try:
+            obj_id = ObjectId(employee_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid employee ID format")
+
+        query: dict = {"_id": obj_id, "is_deleted": False}
+        if role != "superadmin":
+            query["organization_id"] = self._org_id_from_user(current_user)
+
+        emp = await self.db.employees.find_one(query)
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee not found")
+
+        sections = emp.get("onboarding_sections", default_onboarding_sections())
+        hr_id = str(current_user["_id"])
+        now = datetime.utcnow()
+
+        # --- approve ---
+        if data.action == "approve":
+            # All sections must be completed
+            incomplete = [
+                s for s, v in sections.items()
+                if v.get("status") != "completed"
+            ]
+            if incomplete:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot approve — incomplete sections: {incomplete}"
+                )
+            # Critical sections must be verified
+            unverified_critical = [
+                s for s in CRITICAL_SECTIONS
+                if not sections.get(s, {}).get("verified", False)
+            ]
+            if unverified_critical:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot approve — unverified critical sections: {unverified_critical}"
+                )
+
+            await self.db.employees.update_one(
+                {"_id": obj_id},
+                {"$set": {
+                    "status": "active",
+                    "activated_at": now,
+                    "updated_at": now
+                }}
+            )
+            logger.info(f"Employee {employee_id} approved and activated by {current_user.get('email')}")
+            return {"status": "active", "message": "Employee approved and activated"}
+
+        # --- verify_section ---
+        elif data.action == "verify_section":
+            if not data.section:
+                raise HTTPException(status_code=400, detail="section is required for verify_section action")
+            if data.section not in ONBOARDING_SECTIONS:
+                raise HTTPException(status_code=400, detail=f"Invalid section: {data.section}")
+            if sections.get(data.section, {}).get("status") != "completed":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Section '{data.section}' is not completed yet"
+                )
+
+            sections[data.section]["verified"] = True
+            sections[data.section]["verified_at"] = now.isoformat()
+            sections[data.section]["verified_by"] = hr_id
+
+            await self.db.employees.update_one(
+                {"_id": obj_id},
+                {"$set": {
+                    f"onboarding_sections.{data.section}": sections[data.section],
+                    "updated_at": now
+                }}
+            )
+            logger.info(f"Section '{data.section}' verified for employee {employee_id}")
+            return {
+                "status": "verified",
+                "section": data.section,
+                "message": f"Section '{data.section}' verified successfully"
+            }
+
+        # --- request_changes ---
+        elif data.action == "request_changes":
+            if not data.sections:
+                raise HTTPException(status_code=400, detail="sections list is required for request_changes action")
+
+            for sec in data.sections:
+                if sec not in ONBOARDING_SECTIONS:
+                    raise HTTPException(status_code=400, detail=f"Invalid section: {sec}")
+                sections[sec]["status"] = "needs_revision"
+                sections[sec]["verified"] = False
+                sections[sec]["hr_notes"] = data.notes
+
+            # Recalculate progress
+            progress = _calc_progress(sections)
+
+            update_fields: dict = {
+                "onboarding_sections": sections,
+                "onboarding_progress": progress,
+                "hr_notes": data.notes,
+                "status": "onboarding_in_progress",
+                "updated_at": now
+            }
+            await self.db.employees.update_one({"_id": obj_id}, {"$set": update_fields})
+
+            # Notify employee
+            await send_onboarding_revision_email(
+                email=emp["official_email"],
+                first_name=emp["first_name"],
+                org_name="HR Team",
+                sections=data.sections,
+                notes=data.notes
+            )
+
+            logger.info(f"Changes requested for employee {employee_id}: {data.sections}")
+            return {
+                "status": "changes_requested",
+                "sections": data.sections,
+                "message": "Employee notified to update the specified sections"
+            }
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid action. Must be: approve | verify_section | request_changes"
+            )
+
+    # ------------------------------------------------------------------
+    # 9. Soft delete
     # ------------------------------------------------------------------
 
     async def delete_employee(self, employee_id: str, current_user: dict) -> dict:
         role = current_user.get("role")
 
         try:
-            query: dict = {"_id": ObjectId(employee_id), "is_deleted": False}
-            if role != "superadmin":
-                query["organization_id"] = self._org_id_from_user(current_user)
-            emp = await self.db.employees.find_one(query)
+            obj_id = ObjectId(employee_id)
         except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid employee ID format"
-            )
+            raise HTTPException(status_code=400, detail="Invalid employee ID format")
 
+        query: dict = {"_id": obj_id, "is_deleted": False}
+        if role != "superadmin":
+            query["organization_id"] = self._org_id_from_user(current_user)
+
+        emp = await self.db.employees.find_one(query)
         if not emp:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee not found"
-            )
+            raise HTTPException(status_code=404, detail="Employee not found")
 
+        now = datetime.utcnow()
         await self.db.employees.update_one(
-            {"_id": ObjectId(employee_id)},
-            {
-                "$set": {
-                    "is_deleted": True,
-                    "deleted_at": datetime.utcnow(),
-                    "status": "inactive",
-                    "updated_at": datetime.utcnow()
-                }
-            }
+            {"_id": obj_id},
+            {"$set": {"is_deleted": True, "deleted_at": now, "status": "inactive", "updated_at": now}}
         )
 
+        # Deactivate user account
+        if emp.get("user_id"):
+            await self.db.users.update_one(
+                {"_id": ObjectId(emp["user_id"])},
+                {"$set": {"is_active": False, "updated_at": now}}
+            )
+
         logger.info(f"Employee {employee_id} soft deleted by {current_user.get('email')}")
-        return {"message": "Employee deleted successfully", "employee_id": employee_id}
+        return {"message": "Employee deactivated successfully", "employee_id": employee_id}

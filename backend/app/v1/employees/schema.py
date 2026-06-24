@@ -1,102 +1,122 @@
 from pydantic import BaseModel, EmailStr, Field
-from datetime import date, datetime
-from typing import Optional, Any, List
+from datetime import datetime
+from typing import Optional, Any, List, Dict
 
+
+# ---------------------------------------------------------------------------
+# Salary structure
+# ---------------------------------------------------------------------------
+
+class SalaryStructureSchema(BaseModel):
+    basic: float = Field(..., gt=0)
+    hra: float = Field(0.0, ge=0)
+    special_allowance: float = Field(0.0, ge=0)
+    ctc: float = Field(..., gt=0)
+
+
+# ---------------------------------------------------------------------------
+# Create — HR fills this
+# ---------------------------------------------------------------------------
 
 class EmployeeCreateRequest(BaseModel):
     employee_id: str = Field(..., min_length=1, max_length=50)
-    organization_id: Optional[str] = Field(None, description="Required for superadmin. org_admin/hr_admin use their own org automatically.")
+    organization_id: Optional[str] = Field(
+        None, description="Required for superadmin only"
+    )
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
-    email: EmailStr
+    official_email: EmailStr
     phone: str = Field(..., min_length=7, max_length=20)
-    date_of_birth: date
-    gender: str = Field(..., description="Male / Female / Other")
-    address: str = Field(..., min_length=5)
-    department_id: Optional[str] = None
+    department: str = Field(..., min_length=1, max_length=100)
     designation: str = Field(..., min_length=2, max_length=100)
-    joining_date: date
+    reporting_manager: Optional[str] = None
+    joining_date: str = Field(..., description="YYYY-MM-DD")
     employment_type: str = Field("full-time", description="full-time | part-time | contract")
-    salary: float = Field(..., gt=0)
-    bank_account: Optional[str] = None
-    emergency_contact: Optional[dict] = None
+    shift: Optional[str] = None
+    work_location: Optional[str] = None
+    salary_structure: SalaryStructureSchema
+    is_fresher: bool = Field(
+        ...,
+        description="true = fresher (no prior experience), false = experienced"
+    )
+    uan_number: Optional[str] = Field(
+        None,
+        description="UAN from EPFO — required if is_fresher is false"
+    )
 
     class Config:
         json_schema_extra = {
             "example": {
                 "employee_id": "EMP001",
-                "first_name": "Amit",
-                "last_name": "Sharma",
-                "email": "amit.sharma@techsolutions.com",
+                "first_name": "Rahul",
+                "last_name": "Verma",
+                "official_email": "rahul@company.com",
                 "phone": "+919876543210",
-                "date_of_birth": "1995-06-15",
-                "gender": "Male",
-                "address": "45 Brigade Road, Bangalore",
-                "department_id": None,
-                "designation": "Software Engineer",
-                "joining_date": "2024-01-15",
+                "department": "Engineering",
+                "designation": "Senior Developer",
+                "reporting_manager": "Vikram Singh",
+                "joining_date": "2025-07-01",
                 "employment_type": "full-time",
-                "salary": 65000.0,
-                "bank_account": "HDFC000123456",
-                "emergency_contact": {
-                    "name": "Priya Sharma",
-                    "relation": "Spouse",
-                    "phone": "+919876543211"
+                "shift": "General",
+                "work_location": "Hyderabad Office",
+                "is_fresher": False,
+                "uan_number": "100123456789",
+                "salary_structure": {
+                    "basic": 50000,
+                    "hra": 20000,
+                    "special_allowance": 15000,
+                    "ctc": 1200000
                 }
             }
         }
 
+# ---------------------------------------------------------------------------
+# Update — HR updates HR-controlled fields only
+# ---------------------------------------------------------------------------
 
 class EmployeeUpdateRequest(BaseModel):
-    first_name: Optional[str] = Field(None, min_length=1, max_length=100)
-    last_name: Optional[str] = Field(None, min_length=1, max_length=100)
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = Field(None, min_length=7, max_length=20)
-    address: Optional[str] = None
-    department_id: Optional[str] = None
-    designation: Optional[str] = Field(None, min_length=2, max_length=100)
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    reporting_manager: Optional[str] = None
+    shift: Optional[str] = None
+    work_location: Optional[str] = None
     employment_type: Optional[str] = None
-    salary: Optional[float] = Field(None, gt=0)
-    status: Optional[str] = Field(None, description="active | inactive | terminated")
-    bank_account: Optional[str] = None
-    emergency_contact: Optional[dict] = None
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "designation": "Senior Software Engineer",
-                "salary": 80000.0,
-                "department_id": "65abc123def456"
-            }
-        }
+    salary_structure: Optional[SalaryStructureSchema] = None
+    status: Optional[str] = Field(
+        None, description="pending_onboarding | onboarding_in_progress | active | inactive"
+    )
 
 
-class EmployeeResponse(BaseModel):
+# ---------------------------------------------------------------------------
+# Create response
+# ---------------------------------------------------------------------------
+
+class EmployeeCreateResponse(BaseModel):
     id: str
     employee_id: str
-    organization_id: str
+    status: str
+    onboarding_progress: int
+    invite_sent: bool
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# List item (compact)
+# ---------------------------------------------------------------------------
+
+class EmployeeListItem(BaseModel):
+    id: str
+    employee_id: str
     first_name: str
     last_name: str
-    email: EmailStr
+    official_email: str
     phone: str
-    date_of_birth: date
-    gender: str
-    address: str
-    department_id: Optional[str] = None
+    department: str
     designation: str
-    joining_date: date
-    employment_type: str
     status: str
-    salary: float
-    bank_account: Optional[str] = None
-    emergency_contact: Optional[dict] = None
-    is_deleted: bool
-    deleted_at: Optional[datetime] = None
+    onboarding_progress: int
+    joining_date: str
     created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class EmployeeListResponse(BaseModel):
@@ -105,3 +125,293 @@ class EmployeeListResponse(BaseModel):
     page: int
     limit: int
     pages: int
+
+
+# ---------------------------------------------------------------------------
+# CSV Import response
+# ---------------------------------------------------------------------------
+
+class CSVImportError(BaseModel):
+    row: int
+    employee_id: Optional[str] = None
+    email: Optional[str] = None
+    error: str
+
+
+class CSVImportResponse(BaseModel):
+    imported: int
+    failed: int
+    errors: List[CSVImportError]
+
+
+# ---------------------------------------------------------------------------
+# Onboarding section submission schemas
+# ---------------------------------------------------------------------------
+
+class PersonalDetailsRequest(BaseModel):
+    date_of_birth: str = Field(..., description="YYYY-MM-DD")
+    gender: str = Field(..., description="male | female | other")
+    blood_group: Optional[str] = None
+    marital_status: Optional[str] = Field(None, description="single | married | divorced")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "date_of_birth": "1995-03-15",
+                "gender": "male",
+                "blood_group": "O+",
+                "marital_status": "single"
+            }
+        }
+
+
+class AddressEntryRequest(BaseModel):
+    line1: str
+    line2: Optional[str] = None
+    city: str
+    state: str
+    pincode: str
+    country: str = "India"
+
+
+class AddressRequest(BaseModel):
+    current: AddressEntryRequest
+    permanent: Optional[AddressEntryRequest] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "current": {
+                    "line1": "Flat 4B, Sunrise Apartments",
+                    "city": "Hyderabad",
+                    "state": "Telangana",
+                    "pincode": "500032"
+                },
+                "permanent": {
+                    "line1": "12 Gandhi Nagar",
+                    "city": "Visakhapatnam",
+                    "state": "Andhra Pradesh",
+                    "pincode": "530002"
+                }
+            }
+        }
+
+
+class EmergencyContactRequest(BaseModel):
+    name: str
+    relation: str
+    phone: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "Priya Verma",
+                "relation": "Spouse",
+                "phone": "+919876543211"
+            }
+        }
+
+
+class BankDetailsRequest(BaseModel):
+    account_number: str
+    ifsc: str
+    bank_name: str
+    branch: Optional[str] = None
+    account_type: str = Field("savings", description="savings | current")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "account_number": "123456789012",
+                "ifsc": "HDFC0001234",
+                "bank_name": "HDFC Bank",
+                "branch": "Madhapur",
+                "account_type": "savings"
+            }
+        }
+
+
+class GovIDEntryRequest(BaseModel):
+    number: str
+    document_url: Optional[str] = None
+
+
+class GovernmentIDsRequest(BaseModel):
+    pan: Optional[GovIDEntryRequest] = None
+    aadhaar: Optional[GovIDEntryRequest] = None
+    passport: Optional[GovIDEntryRequest] = None
+    uan: Optional[GovIDEntryRequest] = Field(
+        None,
+        description="Universal Account Number (EPFO) — required if employee is experienced (is_fresher: false)"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "pan": {"number": "ABCDE1234F", "document_url": "https://res.cloudinary.com/..."},
+                "aadhaar": {"number": "1234 5678 9012", "document_url": "https://res.cloudinary.com/..."},
+                "passport": {"number": "N1234567", "document_url": "https://res.cloudinary.com/..."},
+                "uan": {"number": "100123456789", "document_url": None}
+            }
+        }
+
+
+class EducationEntryRequest(BaseModel):
+    degree: str
+    institution: str
+    field_of_study: Optional[str] = None
+    start_year: int
+    end_year: Optional[int] = None
+    grade: Optional[str] = None
+    document_url: Optional[str] = None
+
+
+class EducationRequest(BaseModel):
+    entries: List[EducationEntryRequest]
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "entries": [
+                    {
+                        "degree": "B.Tech",
+                        "institution": "JNTU Hyderabad",
+                        "field_of_study": "Computer Science",
+                        "start_year": 2013,
+                        "end_year": 2017,
+                        "grade": "8.5 CGPA"
+                    }
+                ]
+            }
+        }
+
+
+class ExperienceEntryRequest(BaseModel):
+    company: str
+    designation: str
+    start_date: str = Field(..., description="YYYY-MM-DD")
+    end_date: Optional[str] = Field(None, description="YYYY-MM-DD or null if current")
+    is_current: bool = False
+    description: Optional[str] = None
+    document_url: Optional[str] = None
+
+
+class ExperienceRequest(BaseModel):
+    """
+    Fresher → send empty entries list.
+    Experienced → send at least 1 entry (UAN already captured at creation).
+    """
+    entries: Optional[List[ExperienceEntryRequest]] = Field(
+        default=[],
+        description="Past job entries. At least 1 required if employee was marked experienced at creation."
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "entries": [
+                    {
+                        "company": "TechCorp Pvt Ltd",
+                        "designation": "Software Developer",
+                        "start_date": "2019-07-01",
+                        "end_date": "2023-06-30",
+                        "is_current": False,
+                        "description": "Full stack development",
+                        "document_url": "https://res.cloudinary.com/..."
+                    }
+                ]
+            }
+        }
+
+
+class DocumentUploadRequest(BaseModel):
+    name: str
+    document_url: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "Offer Letter",
+                "document_url": "https://res.cloudinary.com/dxbjp7jno/..."
+            }
+        }
+
+
+class DocumentsRequest(BaseModel):
+    entries: List[DocumentUploadRequest]
+
+
+class PolicyAcceptanceRequest(BaseModel):
+    accepted: bool = Field(..., description="Must be true to complete this section")
+
+    class Config:
+        json_schema_extra = {"example": {"accepted": True}}
+
+
+# ---------------------------------------------------------------------------
+# Single wrapper for all onboarding section submissions
+# ---------------------------------------------------------------------------
+
+class OnboardingSectionRequest(BaseModel):
+    """
+    Universal onboarding section submission wrapper.
+    The `data` field carries section-specific payload — shape depends on the section.
+    """
+    data: dict = Field(..., description="Section data — shape varies by section name in path")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "data": {
+                    "date_of_birth": "1995-03-15",
+                    "gender": "male",
+                    "blood_group": "O+",
+                    "marital_status": "single"
+                }
+            }
+        }
+
+
+# ---------------------------------------------------------------------------
+# Onboarding progress response
+# ---------------------------------------------------------------------------
+
+class OnboardingSectionInfo(BaseModel):
+    status: str
+    verified: bool
+
+
+class OnboardingProgressResponse(BaseModel):
+    status: str
+    progress: int
+    is_fresher: Optional[bool] = None    # frontend uses this to show/hide experience section
+    uan_number: Optional[str] = None     # present if experienced
+    sections: Dict[str, Any]
+    hr_notes: Optional[str] = None
+
+
+class SectionSubmitResponse(BaseModel):
+    section: str
+    status: str
+    overall_progress: int
+
+
+# ---------------------------------------------------------------------------
+# HR verify/approve request
+# ---------------------------------------------------------------------------
+
+class VerifyEmployeeRequest(BaseModel):
+    action: str = Field(
+        ...,
+        description="approve | verify_section | request_changes"
+    )
+    section: Optional[str] = Field(None, description="Required for verify_section")
+    sections: Optional[List[str]] = Field(None, description="Required for request_changes")
+    notes: Optional[str] = Field(None, description="HR notes for request_changes")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "action": "approve"
+            }
+        }

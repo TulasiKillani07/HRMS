@@ -364,3 +364,143 @@ async def send_password_reset_success(email: str, full_name: str):
     except Exception as e:
         logger.error(f"Failed to send password reset success email to {email}: {str(e)}")
         return False
+
+
+async def send_employee_welcome_email(
+    email: str,
+    first_name: str,
+    org_name: str,
+    temp_password: str
+):
+    """
+    Send welcome onboarding email to new employee with login credentials.
+    """
+    try:
+        logger.info(f"Sending employee welcome email to {email}")
+
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f'Welcome to {org_name} — Complete Your Onboarding'
+        msg['From'] = settings.GMAIL_USER
+        msg['To'] = email
+
+        html_content = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                    <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">
+                        👋 Welcome to {org_name}!
+                    </h2>
+
+                    <p>Hi <strong>{first_name}</strong>,</p>
+
+                    <p>We're excited to have you on board! Your employee account has been created.</p>
+                    <p>Please log in and complete your onboarding profile to get started.</p>
+
+                    <div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0;">
+                        <h3 style="margin-top: 0; color: #2c3e50;">Your Login Credentials:</h3>
+                        <p style="margin: 5px 0;"><strong>Email:</strong> {email}</p>
+                        <p style="margin: 5px 0;"><strong>Temporary Password:</strong>
+                            <code style="background-color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 16px;">{temp_password}</code>
+                        </p>
+                    </div>
+
+                    <div style="background-color: #e8f8f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <h3 style="margin-top: 0; color: #27ae60;">📋 Onboarding Checklist:</h3>
+                        <ul style="margin: 10px 0; padding-left: 20px;">
+                            <li>Personal Details</li>
+                            <li>Address</li>
+                            <li>Emergency Contact</li>
+                            <li>Bank Details</li>
+                            <li>Government IDs (PAN, Aadhaar)</li>
+                            <li>Education</li>
+                            <li>Experience</li>
+                            <li>Upload Documents</li>
+                            <li>Accept Company Policies</li>
+                        </ul>
+                    </div>
+
+                    <p style="color: #e74c3c;">
+                        <strong>⚠️ Important:</strong> Please change your password immediately after logging in.
+                    </p>
+
+                    <p style="margin-top: 30px;">Best regards,<br><strong>{org_name} HR Team</strong></p>
+
+                    <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+                    <p style="font-size: 12px; color: #7f8c8d;">This is an automated email. Please do not reply.</p>
+                </div>
+            </body>
+        </html>
+        """
+
+        msg.attach(MIMEText(html_content, 'html'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(settings.GMAIL_USER, settings.GMAIL_APP_PASSWORD)
+            server.send_message(msg)
+
+        logger.info(f"Employee welcome email sent to {email}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send employee welcome email to {email}: {str(e)}")
+        return False
+
+
+async def send_onboarding_revision_email(
+    email: str,
+    first_name: str,
+    org_name: str,
+    sections: list,
+    notes: str = None
+):
+    """Notify employee that HR has requested changes to specific onboarding sections."""
+    try:
+        logger.info(f"Sending onboarding revision email to {email}")
+
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f'Action Required — Update Your Onboarding Details'
+        msg['From'] = settings.GMAIL_USER
+        msg['To'] = email
+
+        sections_html = "".join(
+            f"<li style='margin: 4px 0;'>{s.replace('_', ' ').title()}</li>"
+            for s in sections
+        )
+        notes_html = (
+            f"<div style='background:#fff3cd;padding:12px;border-left:4px solid #ffc107;margin:16px 0;'>"
+            f"<strong>HR Notes:</strong> {notes}</div>"
+            if notes else ""
+        )
+
+        html_content = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                    <h2 style="color: #e74c3c; border-bottom: 2px solid #e74c3c; padding-bottom: 10px;">
+                        🔄 Onboarding Update Required
+                    </h2>
+                    <p>Hi <strong>{first_name}</strong>,</p>
+                    <p>HR has reviewed your onboarding profile and requested updates to the following sections:</p>
+                    <ul style="padding-left: 20px; color: #e74c3c;">{sections_html}</ul>
+                    {notes_html}
+                    <p>Please log in and update the highlighted sections at your earliest convenience.</p>
+                    <p style="margin-top: 30px;">Best regards,<br><strong>{org_name} HR Team</strong></p>
+                    <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+                    <p style="font-size: 12px; color: #7f8c8d;">This is an automated email. Please do not reply.</p>
+                </div>
+            </body>
+        </html>
+        """
+
+        msg.attach(MIMEText(html_content, 'html'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(settings.GMAIL_USER, settings.GMAIL_APP_PASSWORD)
+            server.send_message(msg)
+
+        logger.info(f"Onboarding revision email sent to {email}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send onboarding revision email to {email}: {str(e)}")
+        return False
