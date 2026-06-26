@@ -85,12 +85,6 @@ class ExperienceEntry(BaseModel):
     document_url: Optional[str] = None           # Relieving letter URL
 
 
-class DocumentEntry(BaseModel):
-    name: str
-    document_url: str                            # Cloudinary URL
-    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
-
-
 class PolicyAcceptance(BaseModel):
     accepted: bool = False
     accepted_at: Optional[datetime] = None
@@ -108,7 +102,6 @@ ONBOARDING_SECTIONS = [
     "government_ids",
     "education",
     "experience",
-    "documents",
     "policy_acceptance",
 ]
 
@@ -145,6 +138,7 @@ class EmployeeModel(BaseModel):
     last_name: str
     official_email: EmailStr
     phone: str
+    gender: Optional[str] = None                 # male | female | other
     department: str
     designation: str
     reporting_manager: Optional[str] = None
@@ -175,7 +169,6 @@ class EmployeeModel(BaseModel):
     government_ids: Optional[dict] = None
     education: Optional[List[dict]] = None
     experience: Optional[List[dict]] = None
-    documents: Optional[List[dict]] = None
     policy_acceptance: Optional[dict] = None
 
     # Soft delete

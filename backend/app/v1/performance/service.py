@@ -201,7 +201,12 @@ class PerformanceService:
         # Determine employee_id
         role = current_user.get("role")
         if role == "employee":
-            employee_id = str(current_user["_id"])
+            # Resolve employee document ID from user_id
+            user_id = str(current_user["_id"])
+            emp_record = await self.db.employees.find_one({"user_id": user_id, "is_deleted": False})
+            if not emp_record:
+                raise HTTPException(status_code=404, detail="Employee record not found")
+            employee_id = str(emp_record["_id"])
         else:
             if not data.employee_id:
                 raise HTTPException(status_code=400, detail="HR/admin must supply employee_id")
@@ -299,7 +304,13 @@ class PerformanceService:
         
         # Employee can only see their own
         if role == "employee":
-            query["employee_id"] = str(current_user["_id"])
+            # Lookup employee record by user_id to get the employee _id
+            user_id = str(current_user["_id"])
+            emp = await self.db.employees.find_one({"user_id": user_id, "is_deleted": False})
+            if emp:
+                query["employee_id"] = str(emp["_id"])
+            else:
+                query["employee_id"] = user_id  # fallback
         elif employee_id:
             query["employee_id"] = employee_id
         
@@ -347,7 +358,12 @@ class PerformanceService:
             
             # Employee can only see their own
             if role == "employee":
-                query["employee_id"] = str(current_user["_id"])
+                user_id = str(current_user["_id"])
+                emp = await self.db.employees.find_one({"user_id": user_id, "is_deleted": False})
+                if emp:
+                    query["employee_id"] = str(emp["_id"])
+                else:
+                    query["employee_id"] = user_id
             
             okr = await self.db.performance_okrs.find_one(query)
         except:
@@ -373,7 +389,12 @@ class PerformanceService:
             
             # Employee can only update their own
             if role == "employee":
-                query["employee_id"] = str(current_user["_id"])
+                user_id = str(current_user["_id"])
+                emp = await self.db.employees.find_one({"user_id": user_id, "is_deleted": False})
+                if emp:
+                    query["employee_id"] = str(emp["_id"])
+                else:
+                    query["employee_id"] = user_id
             
             okr = await self.db.performance_okrs.find_one(query)
         except:
@@ -498,8 +519,12 @@ class PerformanceService:
         
         # Determine employee_id and review type
         if role == "employee":
-            # Self-review
-            employee_id = str(current_user["_id"])
+            # Self-review — resolve employee document ID from user_id
+            user_id = str(current_user["_id"])
+            emp = await self.db.employees.find_one({"user_id": user_id, "is_deleted": False})
+            if not emp:
+                raise HTTPException(status_code=404, detail="Employee record not found")
+            employee_id = str(emp["_id"])
             if not data.self_rating:
                 raise HTTPException(status_code=400, detail="Employee must provide self_rating")
         else:
@@ -625,7 +650,12 @@ class PerformanceService:
         
         # Employee can only see their own
         if role == "employee":
-            query["employee_id"] = str(current_user["_id"])
+            user_id = str(current_user["_id"])
+            emp = await self.db.employees.find_one({"user_id": user_id, "is_deleted": False})
+            if emp:
+                query["employee_id"] = str(emp["_id"])
+            else:
+                query["employee_id"] = user_id
         elif employee_id:
             query["employee_id"] = employee_id
         
@@ -659,7 +689,12 @@ class PerformanceService:
             
             # Employee can only see their own
             if role == "employee":
-                query["employee_id"] = str(current_user["_id"])
+                user_id = str(current_user["_id"])
+                emp = await self.db.employees.find_one({"user_id": user_id, "is_deleted": False})
+                if emp:
+                    query["employee_id"] = str(emp["_id"])
+                else:
+                    query["employee_id"] = user_id
             
             review = await self.db.performance_reviews.find_one(query)
         except:

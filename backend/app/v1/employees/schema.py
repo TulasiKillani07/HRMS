@@ -27,6 +27,7 @@ class EmployeeCreateRequest(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=100)
     official_email: EmailStr
     phone: str = Field(..., min_length=7, max_length=20)
+    gender: str = Field(..., description="male | female | other")
     department: str = Field(..., min_length=1, max_length=100)
     designation: str = Field(..., min_length=2, max_length=100)
     reporting_manager: Optional[str] = None
@@ -37,7 +38,7 @@ class EmployeeCreateRequest(BaseModel):
     salary_structure: SalaryStructureSchema
     is_fresher: bool = Field(
         ...,
-        description="true = fresher (no prior experience), false = experienced. UAN will be collected during government_ids onboarding section."
+        description="true = fresher (no prior experience), false = experienced."
     )
 
     class Config:
@@ -48,6 +49,7 @@ class EmployeeCreateRequest(BaseModel):
                 "last_name": "Verma",
                 "official_email": "rahul@company.com",
                 "phone": "+919876543210",
+                "gender": "male",
                 "department": "Engineering",
                 "designation": "Senior Developer",
                 "reporting_manager": "Vikram Singh",
@@ -106,6 +108,7 @@ class EmployeeListItem(BaseModel):
     last_name: str
     official_email: str
     phone: str
+    gender: Optional[str] = None
     department: str
     designation: str
     status: str
@@ -320,23 +323,6 @@ class ExperienceRequest(BaseModel):
         }
 
 
-class DocumentUploadRequest(BaseModel):
-    name: str
-    document_url: str
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "name": "Offer Letter",
-                "document_url": "https://res.cloudinary.com/dxbjp7jno/..."
-            }
-        }
-
-
-class DocumentsRequest(BaseModel):
-    entries: List[DocumentUploadRequest]
-
-
 class PolicyAcceptanceRequest(BaseModel):
     accepted: bool = Field(..., description="Must be true to complete this section")
 
@@ -380,9 +366,33 @@ class OnboardingSectionInfo(BaseModel):
 class OnboardingProgressResponse(BaseModel):
     status: str
     progress: int
-    is_fresher: Optional[bool] = None    # frontend uses this to show/hide experience section and UAN requirement
+    is_fresher: Optional[bool] = None
     sections: Dict[str, Any]
     hr_notes: Optional[str] = None
+    # HR-filled info at creation
+    employee_id: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    official_email: Optional[str] = None
+    phone: Optional[str] = None
+    gender: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    reporting_manager: Optional[str] = None
+    joining_date: Optional[str] = None
+    employment_type: Optional[str] = None
+    shift: Optional[str] = None
+    work_location: Optional[str] = None
+    salary_structure: Optional[Any] = None
+    # Employee-filled onboarding data
+    personal_details: Optional[Any] = None
+    address: Optional[Any] = None
+    emergency_contact: Optional[Any] = None
+    bank_details: Optional[Any] = None
+    government_ids: Optional[Any] = None
+    education: Optional[Any] = None
+    experience: Optional[Any] = None
+    policy_acceptance: Optional[Any] = None
 
 
 class SectionSubmitResponse(BaseModel):

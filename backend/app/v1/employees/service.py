@@ -31,17 +31,31 @@ from app.v1.employees.schema import (
 def _serialize(emp: dict) -> dict:
     emp["id"] = str(emp["_id"])
     del emp["_id"]
+    # Remove deprecated documents section from response
+    emp.pop("documents", None)
+    if "onboarding_sections" in emp and isinstance(emp["onboarding_sections"], dict):
+        emp["onboarding_sections"].pop("documents", None)
+        # If fresher, mark experience as not_applicable
+        if emp.get("is_fresher") and "experience" in emp["onboarding_sections"]:
+            if emp["onboarding_sections"]["experience"].get("status") == "pending":
+                emp["onboarding_sections"]["experience"]["status"] = "not_applicable"
+        # Recalculate progress dynamically
+        emp["onboarding_progress"] = _calc_progress(emp["onboarding_sections"])
     return emp
 
 
 def _calc_progress(sections: dict) -> int:
     if not sections:
         return 0
+    # Exclude not_applicable sections from total count
+    applicable = {k: v for k, v in sections.items() if v.get("status") != "not_applicable"}
+    if not applicable:
+        return 100
     completed = sum(
-        1 for s in sections.values()
+        1 for s in applicable.values()
         if s.get("status") == "completed"
     )
-    return round((completed / len(ONBOARDING_SECTIONS)) * 100)
+    return round((completed / len(applicable)) * 100)
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +206,7 @@ class EmployeeService:
             last_name=data["last_name"],
             official_email=data["official_email"],
             phone=data.get("phone", ""),
+            gender=data.get("gender"),
             department=data.get("department", ""),
             designation=data.get("designation", ""),
             reporting_manager=data.get("reporting_manager"),
@@ -209,6 +224,12 @@ class EmployeeService:
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
+
+        # If fresher, auto-mark experience as completed (not applicable)
+        if data.get("is_fresher"):
+            emp_dict_temp = emp_model.model_dump()
+            emp_dict_temp["onboarding_sections"]["experience"]["status"] = "not_applicable"
+            emp_model = EmployeeModel(**emp_dict_temp)
 
         emp_result = await self.db.employees.insert_one(emp_model.model_dump())
         emp_dict = emp_model.model_dump()
@@ -477,7 +498,8 @@ class EmployeeService:
                     "id": 1, "employee_id": 1, "first_name": 1, "last_name": 1,
                     "official_email": 1, "phone": 1, "department": 1,
                     "designation": 1, "status": 1, "onboarding_progress": 1,
-                    "joining_date": 1, "is_fresher": 1, "created_at": 1
+                    "joining_date": 1, "is_fresher": 1, "gender": 1, "created_at": 1,
+                    "onboarding_sections": 1
                 }
             )
             .skip(skip).limit(limit).sort("created_at", -1)
@@ -651,7 +673,7 @@ class EmployeeService:
         progress = _calc_progress(sections)
 
         # Auto-advance status when all sections done
-        all_completed = all(s.get("status") == "completed" for s in sections.values())
+        all_completed = all(s.get("status") in ("completed", "not_applicable") for s in sections.values())
         new_status = emp.get("status")
         if all_completed and new_status == "pending_onboarding":
             new_status = "onboarding_in_progress"
@@ -692,9 +714,7 @@ class EmployeeService:
         if role == "employee":
             user_id = str(current_user["_id"])
             emp = await self.db.employees.find_one(
-                {"user_id": user_id, "is_deleted": False},
-                {"status": 1, "onboarding_progress": 1, "onboarding_sections": 1,
-                 "hr_notes": 1, "is_fresher": 1, "uan_number": 1}
+                {"user_id": user_id, "is_deleted": False}
             )
         else:
             try:
@@ -704,22 +724,52 @@ class EmployeeService:
             query: dict = {"_id": obj_id, "is_deleted": False}
             if role != "superadmin":
                 query["organization_id"] = self._org_id_from_user(current_user)
-            emp = await self.db.employees.find_one(
-                query,
-                {"status": 1, "onboarding_progress": 1, "onboarding_sections": 1,
-                 "hr_notes": 1, "is_fresher": 1, "uan_number": 1}
-            )
+            emp = await self.db.employees.find_one(query)
 
         if not emp:
             raise HTTPException(status_code=404, detail="Employee record not found")
 
+        sections = emp.get("onboarding_sections", default_onboarding_sections())
+        # Remove documents section if present
+        sections.pop("documents", None)
+        # Mark experience as not_applicable for freshers
+        if emp.get("is_fresher") and "experience" in sections:
+            if sections["experience"].get("status") == "pending":
+                sections["experience"]["status"] = "not_applicable"
+
+        # Recalculate progress based on current sections
+        progress = _calc_progress(sections)
+
         return {
             "status": emp.get("status"),
-            "progress": emp.get("onboarding_progress", 0),
-            "is_fresher": emp.get("is_fresher"),           # frontend uses this to show/hide experience section
-            "uan_number": emp.get("uan_number"),           # show UAN if experienced
-            "sections": emp.get("onboarding_sections", default_onboarding_sections()),
-            "hr_notes": emp.get("hr_notes")
+            "progress": progress,
+            "is_fresher": emp.get("is_fresher"),
+            "sections": sections,
+            "hr_notes": emp.get("hr_notes"),
+            # HR-filled info at creation
+            "employee_id": emp.get("employee_id"),
+            "first_name": emp.get("first_name"),
+            "last_name": emp.get("last_name"),
+            "official_email": emp.get("official_email"),
+            "phone": emp.get("phone"),
+            "gender": emp.get("gender"),
+            "department": emp.get("department"),
+            "designation": emp.get("designation"),
+            "reporting_manager": emp.get("reporting_manager"),
+            "joining_date": emp.get("joining_date"),
+            "employment_type": emp.get("employment_type"),
+            "shift": emp.get("shift"),
+            "work_location": emp.get("work_location"),
+            "salary_structure": emp.get("salary_structure"),
+            # Employee-filled onboarding data
+            "personal_details": emp.get("personal_details"),
+            "address": emp.get("address"),
+            "emergency_contact": emp.get("emergency_contact"),
+            "bank_details": emp.get("bank_details"),
+            "government_ids": emp.get("government_ids"),
+            "education": emp.get("education"),
+            "experience": emp.get("experience"),
+            "policy_acceptance": emp.get("policy_acceptance"),
         }
 
     # ------------------------------------------------------------------
@@ -748,15 +798,22 @@ class EmployeeService:
             raise HTTPException(status_code=404, detail="Employee not found")
 
         sections = emp.get("onboarding_sections", default_onboarding_sections())
+        # Remove deprecated documents section
+        sections.pop("documents", None)
+        # Mark experience as not_applicable for freshers
+        if emp.get("is_fresher") and "experience" in sections:
+            if sections["experience"].get("status") == "pending":
+                sections["experience"]["status"] = "not_applicable"
+
         hr_id = str(current_user["_id"])
         now = datetime.utcnow()
 
         # --- approve ---
         if data.action == "approve":
-            # All sections must be completed
+            # All sections must be completed or not_applicable
             incomplete = [
                 s for s, v in sections.items()
-                if v.get("status") != "completed"
+                if v.get("status") not in ("completed", "not_applicable")
             ]
             if incomplete:
                 raise HTTPException(

@@ -12,6 +12,9 @@ from app.v1.organizations.route import router as organizations_router
 from app.v1.users.route import router as users_router
 from app.v1.upload.route import router as upload_router
 from app.v1.performance.route import router as performance_router
+from app.v1.holidays.route import router as holidays_router
+from app.v1.employees.edit_request_route import router as edit_request_router
+from app.v1.notifications.route import router as notifications_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -78,7 +81,7 @@ HR approves (PATCH /employees/{id}/verify) → status: active
 
 **Onboarding sections:**
 `personal_details` | `address` | `emergency_contact` | `bank_details` ⚠️ |
-`government_ids` ⚠️ | `education` | `experience` | `documents` | `policy_acceptance`
+`government_ids` ⚠️ | `education` | `experience` | `policy_acceptance`
 
 ⚠️ = Critical sections — must be HR-verified before employee can be activated.
 
@@ -133,7 +136,10 @@ app.include_router(users_router, prefix=f"{settings.API_V1_PREFIX}/users", tags=
 app.include_router(upload_router, prefix=f"{settings.API_V1_PREFIX}/upload", tags=["File Upload"])
 app.include_router(performance_router, prefix=f"{settings.API_V1_PREFIX}/performance", tags=["Performance & OKRs"])
 app.include_router(employees_router, prefix=f"{settings.API_V1_PREFIX}/employees", tags=["Employees"])
+app.include_router(edit_request_router, prefix=f"{settings.API_V1_PREFIX}/employees/edit-requests", tags=["Employee Edit Requests"])
+app.include_router(notifications_router, prefix=f"{settings.API_V1_PREFIX}/notifications", tags=["Notifications"])
 app.include_router(departments_router, prefix=f"{settings.API_V1_PREFIX}/departments", tags=["Departments"])
 app.include_router(attendance_router, prefix=f"{settings.API_V1_PREFIX}/attendance", tags=["Attendance"])
 app.include_router(leaves_router, prefix=f"{settings.API_V1_PREFIX}/leaves", tags=["Leaves"])
+app.include_router(holidays_router, prefix=f"{settings.API_V1_PREFIX}/holidays", tags=["Holiday Calendar"])
 app.include_router(payroll_router, prefix=f"{settings.API_V1_PREFIX}/payroll", tags=["Payroll"])

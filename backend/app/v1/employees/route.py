@@ -61,6 +61,7 @@ a welcome email with login credentials and onboarding instructions.
   "last_name": "Verma",
   "official_email": "rahul@techsolutions.com",
   "phone": "+919876543210",
+  "gender": "male",
   "department": "Engineering",
   "designation": "Senior Developer",
   "reporting_manager": "Vikram Singh",
@@ -86,6 +87,7 @@ a welcome email with login credentials and onboarding instructions.
   "last_name": "Singh",
   "official_email": "ananya@techsolutions.com",
   "phone": "+919876543221",
+  "gender": "female",
   "department": "Engineering",
   "designation": "Junior Developer",
   "joining_date": "2025-08-01",
@@ -105,15 +107,21 @@ a welcome email with login credentials and onboarding instructions.
 | first_name, last_name | ✅ | |
 | official_email | ✅ | Used as login email |
 | phone | ✅ | |
+| gender | ✅ | `male` / `female` / `other`. Used for Maternity/Paternity leave eligibility |
 | department | ✅ | Department name (text, not ID) |
 | designation | ✅ | Job title |
 | joining_date | ✅ | Format: YYYY-MM-DD |
 | salary_structure.basic, .ctc | ✅ | |
-| is_fresher | ✅ | `true` = fresher, `false` = has prior work experience. **UAN will be collected in government_ids onboarding section** |
+| is_fresher | ✅ | `true` = fresher (experience section auto-marked as `not_applicable`), `false` = experienced (must fill experience section). |
 | reporting_manager | ❌ | Manager name |
 | shift, work_location | ❌ | |
 | employment_type | ❌ | `full-time` (default) / `part-time` / `contract` |
 | organization_id | ❌ | Required only for superadmin |
+
+**Gender-based leave restrictions:**
+- `female` → eligible for Maternity Leave (ML)
+- `male` → eligible for Paternity Leave (PL)
+- Other gender-specific leaves are restricted accordingly
 
 **Response 201:**
 ```json
@@ -241,11 +249,13 @@ async def import_employees_csv(
       "last_name": "Verma",
       "official_email": "rahul@techsolutions.com",
       "phone": "+919876543210",
+      "gender": "male",
       "department": "Engineering",
       "designation": "Senior Developer",
       "status": "onboarding_in_progress",
       "onboarding_progress": 72,
       "joining_date": "2025-07-01",
+      "is_fresher": false,
       "created_at": "2025-06-20T09:00:00"
     }
   ],
@@ -297,8 +307,11 @@ async def get_employees(
   "first_name": "Rahul",
   "last_name": "Verma",
   "official_email": "rahul@techsolutions.com",
+  "phone": "+919876543210",
+  "gender": "male",
   "department": "Engineering",
   "designation": "Senior Developer",
+  "is_fresher": false,
   "status": "onboarding_in_progress",
   "onboarding_progress": 72,
   "salary_structure": { "basic": 50000, "hra": 20000, "special_allowance": 15000, "ctc": 1200000 },
@@ -401,7 +414,7 @@ async def update_employee(
     description="""
 **Purpose:** Submit one section of the employee onboarding profile.
 Progress is recalculated after each submission.
-When all 9 sections are completed, status auto-changes to `onboarding_in_progress` (awaiting HR approval).
+When all 8 sections are completed, status auto-changes to `onboarding_in_progress` (awaiting HR approval).
 
 **Access:**
 - `employee` — submits their own sections (no query param needed, identity from token)
@@ -418,7 +431,6 @@ When all 9 sections are completed, status auto-changes to `onboarding_in_progres
 | `government_ids` | ⚠️ Critical — PAN, Aadhaar, Passport, UAN (all optional) |
 | `education` | List of degrees with institution, year, grade |
 | `experience` | List of past jobs with company, dates |
-| `documents` | List of uploaded documents (Cloudinary URLs) |
 | `policy_acceptance` | Accept company policies (must be `true`) |
 
 ⚠️ `bank_details` and `government_ids` are **critical sections** — HR must verify these
@@ -487,19 +499,7 @@ before the employee can be approved/activated.
 ```
 > ℹ️ `is_fresher` flag (set during creation by HR):
 > - **Experienced** (`is_fresher: false`) → at least 1 experience entry required. UAN is optional.
-> - **Fresher** (`is_fresher: true`) → send `"entries": []` (empty array). UAN is optional.
-
-**documents:**
-```json
-{
-  "data": {
-    "entries": [
-      { "name": "Offer Letter", "document_url": "https://res.cloudinary.com/dxbjp7jno/..." },
-      { "name": "10th Marksheet", "document_url": "https://res.cloudinary.com/dxbjp7jno/..." }
-    ]
-  }
-}
-```
+> - **Fresher** (`is_fresher: true`) → experience section auto-marked as `not_applicable`. No submission needed. UAN is optional.
 
 **policy_acceptance:**
 ```json
@@ -570,7 +570,7 @@ Frontend uses the `is_fresher` flag from this response to show or hide the exper
 ```json
 {
   "status": "onboarding_in_progress",
-  "progress": 78,
+  "progress": 86,
   "is_fresher": false,
   "sections": {
     "personal_details":  { "status": "completed", "verified": true },
@@ -580,20 +580,46 @@ Frontend uses the `is_fresher` flag from this response to show or hide the exper
     "government_ids":    { "status": "needs_revision", "verified": false },
     "education":         { "status": "completed", "verified": true },
     "experience":        { "status": "pending", "verified": false },
-    "documents":         { "status": "pending", "verified": false },
     "policy_acceptance": { "status": "completed", "verified": true }
   },
-  "hr_notes": "PAN card image is blurry, please re-upload"
+  "hr_notes": "PAN card image is blurry, please re-upload",
+  "employee_id": "EMP001",
+  "first_name": "Rahul",
+  "last_name": "Verma",
+  "official_email": "rahul@company.com",
+  "phone": "+919876543210",
+  "gender": "male",
+  "department": "Engineering",
+  "designation": "Senior Developer",
+  "reporting_manager": "Vikram Singh",
+  "joining_date": "2025-07-01",
+  "employment_type": "full-time",
+  "shift": "General",
+  "work_location": "Hyderabad Office",
+  "salary_structure": { "basic": 50000, "hra": 20000, "special_allowance": 15000, "ctc": 1200000 },
+  "personal_details": { "date_of_birth": "1995-03-15", "gender": "male", "blood_group": "O+", "marital_status": "single" },
+  "address": { "current": { "line1": "Flat 4B", "city": "Hyderabad", "state": "Telangana", "pincode": "500032" } },
+  "emergency_contact": { "name": "Priya Verma", "relation": "Spouse", "phone": "+919876543211" },
+  "bank_details": { "account_number": "123456789", "ifsc": "HDFC0001234", "bank_name": "HDFC Bank" },
+  "government_ids": { "pan": { "number": "ABCDE1234F" }, "aadhaar": { "number": "1234 5678 9012" } },
+  "education": { "entries": [{ "degree": "B.Tech", "institution": "JNTU", "start_year": 2013, "end_year": 2017 }] },
+  "experience": null,
+  "policy_acceptance": { "accepted": true, "accepted_at": "2025-07-05T09:00:00" }
 }
 ```
 
+This response includes **all info** — HR-filled fields (employee_id, name, department, salary etc.)
+and employee-filled onboarding data (personal_details, address, bank_details etc.).
+Frontend can display all fields as read-only after submission.
+
 **`is_fresher` flag — frontend logic:**
-- `is_fresher: true` → hide experience section (fresher, no prior jobs). UAN is optional.
+- `is_fresher: true` → experience section auto-marked as `not_applicable` (fresher, no prior jobs). UAN is optional.
 - `is_fresher: false` → show experience section, at least 1 entry required. UAN is optional.
 
 **Section status values:**
 - `pending` — not yet submitted
 - `completed` — submitted by employee
+- `not_applicable` — section not required (e.g., experience for freshers)
 - `needs_revision` — HR requested changes (employee must re-submit)
 
 **Errors:**
@@ -628,7 +654,7 @@ async def get_my_onboarding(
 
 ### Action 1: `approve` — Activate the employee
 
-All 9 sections must be `completed` AND `bank_details` + `government_ids` must be `verified`.
+All 8 sections must be `completed` AND `bank_details` + `government_ids` must be `verified`.
 Sets employee status to `active`. Employee can now access full HRMS features.
 
 **Request Body:**
