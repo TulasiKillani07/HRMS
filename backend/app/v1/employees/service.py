@@ -127,6 +127,20 @@ class EmployeeService:
         # Note: UAN is now optional - collected during onboarding in government_ids section
         # No validation needed here
 
+        # Validate department exists in this organization
+        dept_name = data.get("department", "").strip()
+        if dept_name:
+            dept_exists = await self.db.departments.find_one({
+                "organization_id": org_id,
+                "name": dept_name,
+                "status": "active"
+            })
+            if not dept_exists:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Department '{dept_name}' does not exist. Create it first or check the name."
+                )
+
         # Duplicate checks
         dup_id = await self.db.employees.find_one({
             "employee_id": data["employee_id"],

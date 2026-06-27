@@ -452,6 +452,18 @@ class LeaveService:
             f"Leave applied: {employee_name} ({data.leave_type_code}) "
             f"{data.start_date} to {data.end_date}, {days} days"
         )
+
+        # Notify all HRs about new leave request
+        from app.v1.notifications.service import NotificationService
+        notif = NotificationService(self.db)
+        await notif.notify_org_hrs(
+            organization_id=org_id,
+            title="New Leave Request",
+            message=f"{employee_name} applied for {leave_type['name']} ({data.start_date} to {data.end_date}, {days} days)",
+            type="action", category="leave",
+            reference_id=leave_dict["id"], reference_type="leave_request"
+        )
+
         return leave_dict
 
     async def _get_used_leaves(
@@ -530,6 +542,21 @@ class LeaveService:
 
         logger.info(f"Leave {leave_id} approved by {current_user.get('email')}")
         updated = await self.db.leave_requests.find_one({"_id": obj_id})
+
+        # Notify employee
+        from app.v1.notifications.service import NotificationService
+        notif = NotificationService(self.db)
+        emp = await self.db.employees.find_one({"_id": ObjectId(leave["employee_id"])})
+        if emp and emp.get("user_id"):
+            approver = current_user.get("full_name", current_user.get("email", ""))
+            await notif.create_notification(
+                organization_id=org_id, user_id=emp["user_id"],
+                title="Leave Approved",
+                message=f"Your {leave['leave_type_name']} ({leave['start_date']} to {leave['end_date']}) has been approved by {approver}.",
+                type="info", category="leave",
+                reference_id=leave_id, reference_type="leave_request"
+            )
+
         return _serialize(updated)
 
     async def reject_leave(
@@ -566,6 +593,21 @@ class LeaveService:
 
         logger.info(f"Leave {leave_id} rejected by {current_user.get('email')}")
         updated = await self.db.leave_requests.find_one({"_id": obj_id})
+
+        # Notify employee
+        from app.v1.notifications.service import NotificationService
+        notif = NotificationService(self.db)
+        emp = await self.db.employees.find_one({"_id": ObjectId(leave["employee_id"])})
+        if emp and emp.get("user_id"):
+            rejector = current_user.get("full_name", current_user.get("email", ""))
+            await notif.create_notification(
+                organization_id=org_id, user_id=emp["user_id"],
+                title="Leave Rejected",
+                message=f"Your {leave['leave_type_name']} ({leave['start_date']} to {leave['end_date']}) was rejected by {rejector}. Reason: {data.reason}",
+                type="alert", category="leave",
+                reference_id=leave_id, reference_type="leave_request"
+            )
+
         return _serialize(updated)
 
     async def cancel_leave(

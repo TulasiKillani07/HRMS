@@ -15,6 +15,9 @@ from app.v1.performance.route import router as performance_router
 from app.v1.holidays.route import router as holidays_router
 from app.v1.employees.edit_request_route import router as edit_request_router
 from app.v1.notifications.route import router as notifications_router
+from app.v1.announcements.route import router as announcements_router
+from app.v1.documents.route import router as documents_router
+from app.v1.wellness.route import router as wellness_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -138,6 +141,9 @@ app.include_router(performance_router, prefix=f"{settings.API_V1_PREFIX}/perform
 app.include_router(employees_router, prefix=f"{settings.API_V1_PREFIX}/employees", tags=["Employees"])
 app.include_router(edit_request_router, prefix=f"{settings.API_V1_PREFIX}/employees/edit-requests", tags=["Employee Edit Requests"])
 app.include_router(notifications_router, prefix=f"{settings.API_V1_PREFIX}/notifications", tags=["Notifications"])
+app.include_router(announcements_router, prefix=f"{settings.API_V1_PREFIX}/announcements", tags=["Announcements"])
+app.include_router(documents_router, prefix=f"{settings.API_V1_PREFIX}/documents", tags=["Documents"])
+app.include_router(wellness_router, prefix=f"{settings.API_V1_PREFIX}/wellness", tags=["Wellness & Mood"])
 app.include_router(departments_router, prefix=f"{settings.API_V1_PREFIX}/departments", tags=["Departments"])
 app.include_router(attendance_router, prefix=f"{settings.API_V1_PREFIX}/attendance", tags=["Attendance"])
 app.include_router(leaves_router, prefix=f"{settings.API_V1_PREFIX}/leaves", tags=["Leaves"])

@@ -35,7 +35,6 @@ class DepartmentService:
             name=data.name,
             code=data.code.upper(),
             description=data.description,
-            manager_id=data.manager_id,
             status="active",
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
@@ -47,3 +46,160 @@ class DepartmentService:
 
         logger.info(f"Department '{data.name}' created in org {org_id} by {current_user.get('email')}")
         return dept_dict
+
+    async def get_departments(self, current_user: dict, status_filter: str = None) -> dict:
+        """List all departments in the organization"""
+        org_id = current_user.get("organization_id")
+        if not org_id:
+            raise HTTPException(status_code=400, detail="No organization linked")
+
+        query = {"organization_id": org_id}
+        if status_filter:
+            query["status"] = status_filter
+
+        cursor = self.db.departments.find(query).sort("name", 1)
+        depts = await cursor.to_list(length=100)
+        for d in depts:
+            d["id"] = str(d["_id"])
+            del d["_id"]
+
+        return {"departments": depts, "total": len(depts)}
+
+    async def get_department_by_id(self, dept_id: str, current_user: dict) -> dict:
+        """Get single department"""
+        from bson import ObjectId
+        org_id = current_user.get("organization_id")
+        try:
+            obj_id = ObjectId(dept_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid department ID")
+
+        dept = await self.db.departments.find_one({"_id": obj_id, "organization_id": org_id})
+        if not dept:
+            raise HTTPException(status_code=404, detail="Department not found")
+
+        dept["id"] = str(dept["_id"])
+        del dept["_id"]
+
+        # Get employee count
+        emp_count = await self.db.employees.count_documents({
+            "organization_id": org_id, "department": dept["name"], "is_deleted": False
+        })
+        dept["employee_count"] = emp_count
+
+        return dept
+
+    async def update_department(self, dept_id: str, data, current_user: dict) -> dict:
+        """Update department"""
+        from bson import ObjectId
+        org_id = current_user.get("organization_id")
+        try:
+            obj_id = ObjectId(dept_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid department ID")
+
+        dept = await self.db.departments.find_one({"_id": obj_id, "organization_id": org_id})
+        if not dept:
+            raise HTTPException(status_code=404, detail="Department not found")
+
+        update = data.model_dump(exclude_unset=True)
+        if not update:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        update["updated_at"] = datetime.utcnow()
+        await self.db.departments.update_one({"_id": obj_id}, {"$set": update})
+
+        logger.info(f"Department {dept_id} updated by {current_user.get('email')}")
+        updated = await self.db.departments.find_one({"_id": obj_id})
+        updated["id"] = str(updated["_id"])
+        del updated["_id"]
+        return updated
+
+    async def delete_department(self, dept_id: str, current_user: dict) -> dict:
+        """Deactivate department"""
+        from bson import ObjectId
+        org_id = current_user.get("organization_id")
+        try:
+            obj_id = ObjectId(dept_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid department ID")
+
+        dept = await self.db.departments.find_one({"_id": obj_id, "organization_id": org_id})
+        if not dept:
+            raise HTTPException(status_code=404, detail="Department not found")
+
+        # Check if employees exist in this department
+        emp_count = await self.db.employees.count_documents({
+            "organization_id": org_id, "department": dept["name"], "is_deleted": False
+        })
+        if emp_count > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete: {emp_count} employee(s) still in this department"
+            )
+
+        await self.db.departments.update_one(
+            {"_id": obj_id}, {"$set": {"status": "inactive", "updated_at": datetime.utcnow()}}
+        )
+        logger.info(f"Department '{dept['name']}' deactivated by {current_user.get('email')}")
+        return {"message": f"Department '{dept['name']}' deactivated successfully"}
+
+    async def import_departments_csv(self, file, current_user: dict) -> dict:
+        """Bulk import departments from CSV"""
+        import io
+        import csv
+
+        org_id = current_user.get("organization_id")
+        if not org_id:
+            raise HTTPException(status_code=400, detail="No organization linked")
+
+        content = await file.read()
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = content.decode("latin-1")
+
+        reader = csv.DictReader(io.StringIO(text))
+
+        if not reader.fieldnames:
+            raise HTTPException(status_code=400, detail="CSV is empty or has no headers")
+
+        normalized = {c.strip().lower() for c in reader.fieldnames}
+        if "name" not in normalized or "code" not in normalized:
+            raise HTTPException(status_code=400, detail="CSV must have 'name' and 'code' columns. Optional: 'description'")
+
+        imported = 0
+        errors = []
+
+        for row_num, row in enumerate(reader, start=2):
+            row = {k.strip().lower(): v.strip() for k, v in row.items() if k}
+            name = row.get("name", "").strip()
+            code = row.get("code", "").strip().upper()
+            description = row.get("description", "").strip() or None
+
+            if not name:
+                errors.append({"row": row_num, "error": "Missing department name"})
+                continue
+            if not code:
+                errors.append({"row": row_num, "error": "Missing department code"})
+                continue
+
+            # Duplicate check
+            existing = await self.db.departments.find_one({
+                "code": code, "organization_id": org_id
+            })
+            if existing:
+                errors.append({"row": row_num, "code": code, "error": f"Code '{code}' already exists"})
+                continue
+
+            from app.models.department import DepartmentModel
+            dept = DepartmentModel(
+                organization_id=org_id, name=name, code=code,
+                description=description,
+                status="active", created_at=datetime.utcnow(), updated_at=datetime.utcnow()
+            )
+            await self.db.departments.insert_one(dept.model_dump())
+            imported += 1
+
+        logger.info(f"Department CSV import: {imported} imported, {len(errors)} failed for org {org_id}")
+        return {"imported": imported, "failed": len(errors), "errors": errors}

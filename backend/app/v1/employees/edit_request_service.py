@@ -284,7 +284,7 @@ class EditRequestService:
 
     async def get_edit_requests(
         self, current_user: dict, page: int = 1, limit: int = 10,
-        status_filter: str = None, employee_id: str = None
+        status_filter: str = None, employee_id: str = None, department: str = None
     ) -> dict:
         """List edit requests — employee sees own, HR sees all"""
         role = current_user.get("role")
@@ -304,6 +304,8 @@ class EditRequestService:
 
         if status_filter:
             query["status"] = status_filter
+        if department:
+            query["department"] = {"$regex": department, "$options": "i"}
 
         total = await self.db.edit_requests.count_documents(query)
         cursor = self.db.edit_requests.find(query).skip(skip).limit(limit).sort("created_at", -1)

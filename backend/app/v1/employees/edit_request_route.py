@@ -96,11 +96,12 @@ async def list_edit_requests(
     limit: int = Query(10, ge=1, le=100),
     status: Optional[str] = Query(None, description="pending | approved | rejected | expired"),
     employee_id: Optional[str] = Query(None, description="HR: filter by employee"),
+    department: Optional[str] = Query(None, description="Filter by department"),
     db=Depends(get_database),
     current_user: dict = Depends(_require_any)
 ):
     return await EditRequestService(db).get_edit_requests(
-        current_user, page, limit, status, employee_id
+        current_user, page, limit, status, employee_id, department
     )
 
 
