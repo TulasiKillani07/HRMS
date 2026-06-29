@@ -11,24 +11,28 @@ class LeaveTypeCreateRequest(BaseModel):
     """Add a new leave type to the organization's configuration"""
     name: str = Field(..., min_length=2, max_length=100)
     code: str = Field(..., min_length=1, max_length=10)
+    accrual_type: str = Field("yearly", description="yearly | monthly")
     days_per_year: int = Field(0, ge=-1, description="-1 means unlimited")
+    days_per_month: float = Field(0, ge=0, description="If monthly accrual (e.g., 1 CL per month)")
     is_paid: bool = True
     carry_forward: bool = False
     max_carry_forward_days: int = Field(0, ge=0)
     applicable_after_days: int = Field(0, ge=0, description="Available after X days from joining")
+    converts_to_lop: bool = Field(True, description="When exhausted, extra leaves become LOP")
     description: Optional[str] = None
 
     class Config:
         json_schema_extra = {
             "example": {
-                "name": "Work From Home",
-                "code": "WFH",
-                "days_per_year": 24,
+                "name": "Casual Leave",
+                "code": "CL",
+                "accrual_type": "monthly",
+                "days_per_year": 12,
+                "days_per_month": 1,
                 "is_paid": True,
                 "carry_forward": False,
-                "max_carry_forward_days": 0,
-                "applicable_after_days": 0,
-                "description": "Work from home days"
+                "converts_to_lop": True,
+                "description": "1 per month, converts to LOP when exhausted"
             }
         }
 
@@ -37,20 +41,24 @@ class LeaveTypeUpdateRequest(BaseModel):
     """Update an existing leave type"""
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     code: Optional[str] = Field(None, min_length=1, max_length=10)
+    accrual_type: Optional[str] = Field(None, description="yearly | monthly")
     days_per_year: Optional[int] = Field(None, ge=-1)
+    days_per_month: Optional[float] = Field(None, ge=0)
     is_paid: Optional[bool] = None
     carry_forward: Optional[bool] = None
     max_carry_forward_days: Optional[int] = Field(None, ge=0)
     applicable_after_days: Optional[int] = Field(None, ge=0)
+    converts_to_lop: Optional[bool] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
 
     class Config:
         json_schema_extra = {
             "example": {
-                "days_per_year": 15,
-                "carry_forward": True,
-                "max_carry_forward_days": 10
+                "accrual_type": "monthly",
+                "days_per_month": 1.5,
+                "days_per_year": 18,
+                "converts_to_lop": True
             }
         }
 
@@ -59,11 +67,14 @@ class LeaveTypeResponse(BaseModel):
     id: str
     name: str
     code: str
+    accrual_type: str = "yearly"
     days_per_year: int
+    days_per_month: float = 0
     is_paid: bool
     carry_forward: bool
     max_carry_forward_days: int
     applicable_after_days: int
+    converts_to_lop: bool = True
     description: Optional[str] = None
     is_active: bool
     created_at: datetime

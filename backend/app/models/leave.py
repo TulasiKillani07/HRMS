@@ -12,11 +12,14 @@ class LeaveTypeConfig(BaseModel):
     id: Optional[str] = None                     # UUID assigned on creation
     name: str                                    # e.g., "Casual Leave"
     code: str                                    # e.g., "CL"
-    days_per_year: int = Field(0, ge=-1)         # -1 means unlimited (e.g., LWP)
+    accrual_type: str = "yearly"                 # yearly | monthly
+    days_per_year: int = Field(0, ge=-1)         # Total if yearly; -1 = unlimited
+    days_per_month: float = Field(0, ge=0)       # If monthly (e.g., 1.5 per month)
     is_paid: bool = True
     carry_forward: bool = False
     max_carry_forward_days: int = Field(0, ge=0)
     applicable_after_days: int = Field(0, ge=0)  # Available after X days of joining
+    converts_to_lop: bool = True                 # When exhausted, extra days become LOP
     description: Optional[str] = None
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -28,6 +31,9 @@ class LeaveConfigurationModel(BaseModel):
     organization_id: str
     year: int
     leave_types: List[LeaveTypeConfig] = []
+    # Attendance-to-LOP config
+    missed_attendance_threshold: int = 3         # If employee misses X check-in/outs per month, count as LOP
+    auto_lop_on_missed_attendance: bool = True   # Enable/disable auto LOP for missed attendance
     created_by: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -37,16 +43,13 @@ class LeaveConfigurationModel(BaseModel):
             "example": {
                 "organization_id": "65abc123def456",
                 "year": 2025,
+                "missed_attendance_threshold": 3,
+                "auto_lop_on_missed_attendance": True,
                 "leave_types": [
                     {
-                        "id": "uuid-1",
-                        "name": "Casual Leave",
-                        "code": "CL",
-                        "days_per_year": 12,
-                        "is_paid": True,
-                        "carry_forward": False,
-                        "applicable_after_days": 0,
-                        "is_active": True
+                        "name": "Casual Leave", "code": "CL",
+                        "accrual_type": "monthly", "days_per_month": 1,
+                        "days_per_year": 12, "converts_to_lop": True
                     }
                 ]
             }
@@ -61,100 +64,57 @@ DEFAULT_LEAVE_TYPES = [
     {
         "name": "Casual Leave",
         "code": "CL",
+        "accrual_type": "monthly",
         "days_per_year": 12,
+        "days_per_month": 1,
         "is_paid": True,
         "carry_forward": False,
         "max_carry_forward_days": 0,
         "applicable_after_days": 0,
-        "description": "For personal/short-term needs",
+        "converts_to_lop": True,
+        "description": "For personal/short-term needs. 1 per month.",
         "is_active": True,
     },
     {
         "name": "Sick Leave",
         "code": "SL",
+        "accrual_type": "monthly",
         "days_per_year": 6,
+        "days_per_month": 0.5,
         "is_paid": True,
         "carry_forward": False,
         "max_carry_forward_days": 0,
         "applicable_after_days": 0,
-        "description": "For medical reasons or illness",
+        "converts_to_lop": True,
+        "description": "For medical reasons. 0.5 per month.",
         "is_active": True,
     },
     {
         "name": "Earned Leave",
         "code": "EL",
+        "accrual_type": "yearly",
         "days_per_year": 15,
+        "days_per_month": 0,
         "is_paid": True,
         "carry_forward": True,
         "max_carry_forward_days": 30,
         "applicable_after_days": 180,
-        "description": "Planned leave, accrued over time",
+        "converts_to_lop": True,
+        "description": "Planned leave, credited yearly. Carry forward allowed.",
         "is_active": True,
     },
     {
-        "name": "Maternity Leave",
-        "code": "ML",
-        "days_per_year": 182,
-        "is_paid": True,
-        "carry_forward": False,
-        "max_carry_forward_days": 0,
-        "applicable_after_days": 80,
-        "description": "For female employees during pregnancy and childbirth",
-        "is_active": True,
-    },
-    {
-        "name": "Paternity Leave",
-        "code": "PL",
-        "days_per_year": 15,
-        "is_paid": True,
-        "carry_forward": False,
-        "max_carry_forward_days": 0,
-        "applicable_after_days": 0,
-        "description": "For male employees on birth of child",
-        "is_active": True,
-    },
-    {
-        "name": "Marriage Leave",
-        "code": "MRL",
-        "days_per_year": 3,
-        "is_paid": True,
-        "carry_forward": False,
-        "max_carry_forward_days": 0,
-        "applicable_after_days": 0,
-        "description": "For employee's own marriage",
-        "is_active": True,
-    },
-    {
-        "name": "Bereavement Leave",
-        "code": "BL",
-        "days_per_year": 5,
-        "is_paid": True,
-        "carry_forward": False,
-        "max_carry_forward_days": 0,
-        "applicable_after_days": 0,
-        "description": "On death of immediate family member",
-        "is_active": True,
-    },
-    {
-        "name": "Comp Off",
-        "code": "CO",
+        "name": "Loss of Pay",
+        "code": "LOP",
+        "accrual_type": "yearly",
         "days_per_year": -1,
-        "is_paid": True,
+        "days_per_month": 0,
+        "is_paid": False,
         "carry_forward": False,
         "max_carry_forward_days": 0,
         "applicable_after_days": 0,
-        "description": "Compensatory off for working on holidays/weekends",
-        "is_active": True,
-    },
-    {
-        "name": "Optional Holiday",
-        "code": "OH",
-        "days_per_year": 2,
-        "is_paid": True,
-        "carry_forward": False,
-        "max_carry_forward_days": 0,
-        "applicable_after_days": 0,
-        "description": "Choose from list of optional/restricted holidays",
+        "converts_to_lop": False,
+        "description": "Unpaid leave. Applied when other leave balances are exhausted or attendance missed.",
         "is_active": True,
     },
 ]

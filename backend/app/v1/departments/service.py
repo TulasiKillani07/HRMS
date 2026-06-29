@@ -45,6 +45,15 @@ class DepartmentService:
         dept_dict["id"] = str(result.inserted_id)
 
         logger.info(f"Department '{data.name}' created in org {org_id} by {current_user.get('email')}")
+
+        # Activity log
+        from app.v1.activity_logs.service import ActivityLogService
+        await ActivityLogService(self.db).log(
+            user=current_user, action="created", module="department",
+            description=f"Created department '{data.name}' ({data.code.upper()})",
+            target_id=dept_dict["id"], target_name=data.name, target_type="department"
+        )
+
         return dept_dict
 
     async def get_departments(self, current_user: dict, status_filter: str = None) -> dict:

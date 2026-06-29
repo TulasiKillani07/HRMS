@@ -133,11 +133,14 @@ class LeaveService:
             "id": str(uuid.uuid4()),
             "name": data.name,
             "code": data.code.upper(),
+            "accrual_type": data.accrual_type,
             "days_per_year": data.days_per_year,
+            "days_per_month": data.days_per_month,
             "is_paid": data.is_paid,
             "carry_forward": data.carry_forward,
             "max_carry_forward_days": data.max_carry_forward_days,
             "applicable_after_days": data.applicable_after_days,
+            "converts_to_lop": data.converts_to_lop,
             "description": data.description,
             "is_active": True,
             "created_at": datetime.utcnow(),
@@ -180,6 +183,15 @@ class LeaveService:
                 break
 
         if target_idx is None:
+            raise HTTPException(status_code=404, detail="Leave type not found")
+
+        # Protect default types (CL, SL, EL, LOP) from editing
+        PROTECTED_CODES = ["CL", "SL", "EL", "LOP"]
+        if leave_types[target_idx].get("code") in PROTECTED_CODES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot edit default leave type '{leave_types[target_idx]['code']}'. It is system-defined."
+            )
             raise HTTPException(status_code=404, detail="Leave type not found")
 
         # Check code duplication if code is being changed
@@ -243,6 +255,14 @@ class LeaveService:
 
         if not target:
             raise HTTPException(status_code=404, detail="Leave type not found")
+
+        # Protect default types (CL, SL, EL, LOP) from deletion
+        PROTECTED_CODES = ["CL", "SL", "EL", "LOP"]
+        if target.get("code") in PROTECTED_CODES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete default leave type '{target['code']}'. It is system-defined."
+            )
 
         # Check if any approved/pending leaves exist for this type
         leave_count = await self.db.leave_requests.count_documents({
@@ -543,6 +563,14 @@ class LeaveService:
         logger.info(f"Leave {leave_id} approved by {current_user.get('email')}")
         updated = await self.db.leave_requests.find_one({"_id": obj_id})
 
+        # Activity log
+        from app.v1.activity_logs.service import ActivityLogService
+        await ActivityLogService(self.db).log(
+            user=current_user, action="approved", module="leave",
+            description=f"Approved {leave['leave_type_name']} for {leave['employee_name']} ({leave['start_date']} to {leave['end_date']})",
+            target_id=leave_id, target_name=leave["employee_name"], target_type="leave_request"
+        )
+
         # Notify employee
         from app.v1.notifications.service import NotificationService
         notif = NotificationService(self.db)
@@ -593,6 +621,14 @@ class LeaveService:
 
         logger.info(f"Leave {leave_id} rejected by {current_user.get('email')}")
         updated = await self.db.leave_requests.find_one({"_id": obj_id})
+
+        # Activity log
+        from app.v1.activity_logs.service import ActivityLogService
+        await ActivityLogService(self.db).log(
+            user=current_user, action="rejected", module="leave",
+            description=f"Rejected {leave['leave_type_name']} for {leave['employee_name']} ({leave['start_date']} to {leave['end_date']})",
+            target_id=leave_id, target_name=leave["employee_name"], target_type="leave_request"
+        )
 
         # Notify employee
         from app.v1.notifications.service import NotificationService

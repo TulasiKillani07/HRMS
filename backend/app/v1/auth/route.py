@@ -205,6 +205,49 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     )
 
 
+@router.put(
+    "/profile",
+    summary="Update My Profile",
+    description="""
+**Purpose:** Update own profile settings (name, phone, avatar).
+
+**Access:** All authenticated users
+
+**Request Body (all optional):**
+```json
+{
+  "full_name": "Updated Name",
+  "phone": "+919999999999",
+  "avatar_url": "https://res.cloudinary.com/..."
+}
+```
+
+**Response 200:**
+```json
+{ "message": "Profile updated", "full_name": "Updated Name", "phone": "...", "avatar_url": "..." }
+```
+""",
+)
+async def update_profile(
+    full_name: Optional[str] = None,
+    phone: Optional[str] = None,
+    avatar_url: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    from bson import ObjectId
+    from datetime import datetime
+    update = {}
+    if full_name: update["full_name"] = full_name
+    if phone: update["phone"] = phone
+    if avatar_url: update["avatar_url"] = avatar_url
+    if not update:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    update["updated_at"] = datetime.utcnow()
+    await db.users.update_one({"_id": current_user["_id"]}, {"$set": update})
+    return {"message": "Profile updated", **{k: v for k, v in update.items() if k != "updated_at"}}
+
+
 @router.post(
     "/forgot-password",
     status_code=status.HTTP_200_OK,

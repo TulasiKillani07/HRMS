@@ -125,6 +125,14 @@ class AuthService:
         refresh_token = create_refresh_token({"sub": str(user["_id"])})
         
         logger.info(f"User logged in successfully: {data.email} (role: {user['role']})")
+
+        # Activity log
+        from app.v1.activity_logs.service import ActivityLogService
+        await ActivityLogService(self.db).log(
+            user=user, action="login", module="auth",
+            description=f"{user.get('full_name', data.email)} logged in",
+            target_id=str(user["_id"]), target_name=user.get("full_name", data.email), target_type="user"
+        )
         
         return {
             "access_token": access_token,

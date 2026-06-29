@@ -8,10 +8,7 @@ from typing import Optional, Any, List, Dict
 # ---------------------------------------------------------------------------
 
 class SalaryStructureSchema(BaseModel):
-    basic: float = Field(..., gt=0)
-    hra: float = Field(0.0, ge=0)
-    special_allowance: float = Field(0.0, ge=0)
-    ctc: float = Field(..., gt=0)
+    ctc: float = Field(..., gt=0, description="Annual CTC. Breakdown (basic, HRA, special) auto-calculated from payroll config during payroll run.")
 
 
 # ---------------------------------------------------------------------------

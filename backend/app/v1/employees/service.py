@@ -203,9 +203,6 @@ class EmployeeService:
         sal = data.get("salary_structure", {})
         if isinstance(sal, dict):
             salary_structure = SalaryStructure(
-                basic=sal.get("basic", 0),
-                hra=sal.get("hra", 0),
-                special_allowance=sal.get("special_allowance", 0),
                 ctc=sal.get("ctc", 0)
             )
         else:
@@ -288,6 +285,16 @@ class EmployeeService:
             org_id=org_id,
             data=data.model_dump(),
             org_name=org_name
+        )
+
+        # Activity log
+        from app.v1.activity_logs.service import ActivityLogService
+        await ActivityLogService(self.db).log(
+            user=current_user, action="created", module="employee",
+            description=f"Created employee {data.first_name} {data.last_name} ({data.employee_id})",
+            target_id=emp_dict["id"],
+            target_name=f"{data.first_name} {data.last_name}",
+            target_type="employee"
         )
 
         return {
@@ -443,9 +450,6 @@ class EmployeeService:
                         "joining_date": row.get("joining_date", ""),
                         "employment_type": row.get("employment_type", "full-time"),
                         "salary_structure": {
-                            "basic": ctc * 0.4,
-                            "hra": ctc * 0.2,
-                            "special_allowance": ctc * 0.15,
                             "ctc": ctc
                         }
                     },

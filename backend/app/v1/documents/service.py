@@ -126,6 +126,10 @@ class DocumentService:
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
 
+        # Check if already acknowledged
+        if user_id in doc.get("acknowledged_by", []):
+            raise HTTPException(status_code=400, detail="You have already acknowledged this document")
+
         await self.db.company_documents.update_one({"_id": obj_id}, {"$addToSet": {"acknowledged_by": user_id}})
         return {"message": "Document acknowledged"}
 

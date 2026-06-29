@@ -641,7 +641,9 @@ class AttendanceService:
                 a = att_map[emp_id]
                 info.update({"status": a.get("status"), "check_in": a.get("check_in"),
                              "check_out": a.get("check_out"), "total_hours": a.get("total_hours"),
-                             "is_late": a.get("is_late", False), "check_in_location": a.get("check_in_location")})
+                             "is_late": a.get("is_late", False), "check_in_location": a.get("check_in_location"),
+                             "check_in_photo": a.get("check_in_photo"),
+                             "check_out_photo": a.get("check_out_photo")})
                 present.append(info)
             else:
                 info["status"] = "absent"

@@ -8,10 +8,7 @@ from pydantic import BaseModel, Field, EmailStr
 # ---------------------------------------------------------------------------
 
 class SalaryStructure(BaseModel):
-    basic: float = Field(..., gt=0)
-    hra: float = Field(0.0, ge=0)
-    special_allowance: float = Field(0.0, ge=0)
-    ctc: float = Field(..., gt=0)
+    ctc: float = Field(..., gt=0)                # Annual CTC only. Breakdown calculated from payroll config.
 
 
 # ---------------------------------------------------------------------------

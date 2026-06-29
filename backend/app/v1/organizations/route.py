@@ -137,25 +137,7 @@ async def get_organizations(
 
 **Access:** `org_admin`, `hr_admin` — returns their own organization automatically.
 
-**Request Body:** None — organization is inferred from the user's token.
-
-**Response 200:**
-```json
-{
-  "id": "65abc...",
-  "org_name": "Tech Solutions India",
-  "email": "contact@techsolutions.com",
-  "emp_count_for_access": 100,
-  "admin_user_access_limit": 3,
-  "industry": "Information Technology",
-  "status": "active",
-  ...
-}
-```
-
-**Errors:**
-- `403` — User is not org_admin or hr_admin
-- `404` — User is not linked to any organization
+**Response 200:** Full organization object.
 """,
 )
 async def get_my_organization(
@@ -169,6 +151,48 @@ async def get_my_organization(
     if not org_id:
         raise HTTPException(status_code=404, detail="User is not assigned to any organization")
     return await OrganizationService(db).get_organization_by_id(org_id)
+
+
+@router.put(
+    "/me",
+    response_model=OrganizationResponse,
+    summary="Update My Organization",
+    description="""
+**Purpose:** Org admin updates their own organization details.
+
+**Access:** `org_admin`
+
+**Request Body (all optional):**
+```json
+{
+  "org_name": "Updated Company Name",
+  "email": "new@company.com",
+  "industry": "Technology",
+  "country": "India",
+  "state": "Telangana",
+  "org_address": "New address",
+  "admin_name": "New Admin Name",
+  "admin_phone": "+919999999999"
+}
+```
+
+**Note:** `emp_count_for_access` and `admin_user_access_limit` can only be changed by superadmin.
+
+**Response 200:** Updated organization object.
+""",
+)
+async def update_my_organization(
+    data: OrganizationUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    role = current_user.get("role")
+    if role != "org_admin":
+        raise HTTPException(status_code=403, detail="Only org_admin can update organization")
+    org_id = current_user.get("organization_id")
+    if not org_id:
+        raise HTTPException(status_code=404, detail="No organization linked")
+    return await OrganizationService(db).update_organization(org_id, data)
 
 
 @router.get(
