@@ -25,17 +25,6 @@ def _emp(u: dict = Depends(get_current_user)):
 def _any(u: dict = Depends(get_current_user)):
     return u
 
-
-# Schemas
-class PayrollConfigRequest(BaseModel):
-    earning_components: Optional[list] = Field(None, description="[{name, percentage}] — earning components from CTC")
-    deduction_components: Optional[list] = Field(None, description="[{name, percentage, basis, limit?, type?, amount?}]")
-    employer_components: Optional[list] = Field(None, description="[{name, percentage, basis, limit?, type?, amount?}]")
-    lop_deduction_basis: Optional[str] = Field(None, description="gross | basic | ctc")
-    lop_calculation: Optional[str] = Field(None, description="working_days | calendar_days")
-    pay_day: Optional[int] = None
-    pay_cycle: Optional[str] = None
-
 class RunPayrollRequest(BaseModel):
     month: int = Field(..., ge=1, le=12)
     year: int = Field(...)
@@ -48,80 +37,122 @@ class AdjustmentRequest(BaseModel):
     month: int = Field(..., ge=1, le=12)
     year: int
 
-class EditPayslipRequest(BaseModel):
-    bonus: Optional[float] = None
-    reimbursements: Optional[float] = None
-    tds: Optional[float] = None
-    other_deductions: Optional[float] = None
-
-
-# CONFIG
-@router.get("/config", summary="Get Payroll Config", description="""
-**Purpose:** Get org-level payroll configuration.
+# SETTINGS
+@router.get("/settings", summary="Get Payroll Settings", description="""
+**Purpose:** Get company payroll configuration.
 
 **Access:** `org_admin`, `hr_admin`
 
 **Response 200:**
 ```json
 {
-  "basic_percentage": 40,
-  "hra_percentage": 20,
-  "special_allowance_percentage": 15,
-  "pf_percentage": 12,
-  "esi_employee_percentage": 0.75,
-  "esi_employer_percentage": 3.25,
-  "esi_limit": 21000,
-  "professional_tax": 200,
-  "lop_deduction_basis": "gross",
-  "pay_day": 28,
-  "pay_cycle": "monthly",
-  "lop_calculation": "calendar_days"
+  "salary_structure": {
+    "basic_percentage": 40,
+    "hra_percentage": 25,
+    "special_allowance_percentage": 25,
+    "other_percentage": 10
+  },
+  "pf": {
+    "enabled": true,
+    "employee_percentage": 12,
+    "employer_percentage": 12,
+    "pf_applicable_on": "full_basic",
+    "pf_wage_ceiling": 15000,
+    "employer_pf_included_in_ctc": true
+  },
+  "esi": {
+    "enabled": true,
+    "employee_percentage": 0.75,
+    "employer_percentage": 3.25,
+    "salary_limit": 21000,
+    "employer_esi_included_in_ctc": true
+  },
+  "professional_tax": {
+    "enabled": true,
+    "state": "Telangana",
+    "amount": 200
+  },
+  "lop": {
+    "calculation": "working_days",
+    "deduction_basis": "gross"
+  },
+  "payroll_schedule": {
+    "pay_day": 28,
+    "lock_after_processing": true,
+    "allow_reprocessing": false
+  }
 }
 ```
-
-| Field | Description |
-|-------|-------------|
-| basic_percentage | Basic = CTC × this % |
-| hra_percentage | HRA = CTC × this % |
-| special_allowance_percentage | Special = CTC × this % |
-| pf_percentage | PF deduction % of Basic |
-| esi_employee_percentage | ESI employee % |
-| esi_limit | ESI applies only if gross ≤ this |
-| professional_tax | Monthly PT amount |
-| lop_deduction_basis | `"gross"` or `"basic"` — LOP per day = (basis / working days) |
-| pay_day | Day of month salary is paid |
-| lop_calculation | `"calendar_days"` or `"working_days"` |
 """)
-async def get_config(organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
-    return await PayrollService(db).get_config(current_user, organization_id)
+async def get_settings(organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
+    return await PayrollService(db).get_settings(current_user, organization_id)
 
-@router.put("/config", summary="Update Payroll Config", description="""
-**Purpose:** Set/update payroll configuration. All fields optional — send only what needs changing.
+@router.put("/settings", summary="Update Payroll Settings", description="""
+**Purpose:** Update company payroll configuration. Send only the sections you want to update.
 
 **Access:** `org_admin`
 
-**Request Body (all optional):**
+**Important:** `salary_structure` percentages must total exactly 100%.
+
+**Request Body (send any section):**
 ```json
 {
-  "basic_percentage": 40,
-  "hra_percentage": 20,
-  "special_allowance_percentage": 15,
-  "pf_percentage": 12,
-  "professional_tax": 200,
-  "lop_deduction_basis": "gross",
-  "pay_day": 28
+  "salary_structure": {
+    "basic_percentage": 50,
+    "hra_percentage": 25,
+    "special_allowance_percentage": 25,
+    "other_percentage": 0
+  },
+  "pf": {
+    "enabled": true,
+    "employee_percentage": 12,
+    "employer_percentage": 12,
+    "pf_applicable_on": "full_basic",
+    "pf_wage_ceiling": 15000,
+    "employer_pf_included_in_ctc": true
+  },
+  "esi": {
+    "enabled": true,
+    "employee_percentage": 0.75,
+    "employer_percentage": 3.25,
+    "salary_limit": 21000,
+    "employer_esi_included_in_ctc": true
+  },
+  "professional_tax": {
+    "enabled": true,
+    "state": "Andhra Pradesh",
+    "amount": 200
+  },
+  "lop": {
+    "calculation": "working_days",
+    "deduction_basis": "gross"
+  },
+  "payroll_schedule": {
+    "pay_day": 28,
+    "lock_after_processing": true,
+    "allow_reprocessing": false
+  }
 }
 ```
 
-**LOP Deduction Basis:**
-- `"gross"` — LOP per day = Monthly Gross / Working Days
-- `"basic"` — LOP per day = Basic / Working Days
+**Fields:**
+| Section | Field | Values |
+|---------|-------|--------|
+| salary_structure | basic_percentage, hra_percentage, special_allowance_percentage, other_percentage | Must total 100 |
+| pf | enabled, employee_percentage, employer_percentage, pf_applicable_on, pf_wage_ceiling, employer_pf_included_in_ctc | pf_applicable_on: full_basic \| pf_wage_ceiling |
+| esi | enabled, employee_percentage, employer_percentage, salary_limit, employer_esi_included_in_ctc | |
+| professional_tax | enabled, state, amount | |
+| lop | calculation, deduction_basis | calculation: working_days \| calendar_days; deduction_basis: gross \| basic \| ctc |
+| payroll_schedule | pay_day, lock_after_processing, allow_reprocessing | |
+
+**Errors:**
+- `400` — Salary structure total ≠ 100%
 """)
-async def update_config(data: PayrollConfigRequest, organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_admin)):
-    return await PayrollService(db).update_config(data.model_dump(exclude_unset=True), current_user, organization_id)
+async def update_settings(data: dict, organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_admin)):
+    return await PayrollService(db).update_settings(data, current_user, organization_id)
 
 # RUNS
-@router.post("/run", status_code=201, summary="Run Payroll", description="**Access:** org_admin, hr_admin\n\nProcess payroll for a month. Auto-calculates all payslips.")
+@router.post("/run", status_code=201, summary="Run Payroll", description="**Access:** org_admin, hr_admin\n\nProcess payroll for a month.")
 async def run_payroll(data: RunPayrollRequest, organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await PayrollService(db).run_payroll(data.month, data.year, current_user, organization_id)
 
@@ -129,37 +160,33 @@ async def run_payroll(data: RunPayrollRequest, organization_id: Optional[str] = 
 async def get_runs(year: Optional[int] = Query(None), status: Optional[str] = Query(None), organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await PayrollService(db).get_runs(current_user, year, status, organization_id)
 
-@router.get("/runs/{run_id}", summary="Get Run Detail", description="**Access:** org_admin, hr_admin\n\nReturns run + all payslips.")
+@router.get("/runs/{run_id}", summary="Get Run Detail", description="**Access:** org_admin, hr_admin")
 async def get_run_detail(run_id: str = Path(...), db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await PayrollService(db).get_run_detail(run_id, current_user)
 
-@router.patch("/runs/{run_id}/approve", summary="Approve Payroll", description="**Access:** org_admin\n\nChanges status: processed → approved")
+@router.patch("/runs/{run_id}/approve", summary="Approve Payroll", description="**Access:** org_admin")
 async def approve_run(run_id: str = Path(...), db=Depends(get_database), current_user: dict = Depends(_admin)):
     return await PayrollService(db).approve_run(run_id, current_user)
 
-@router.patch("/runs/{run_id}/mark-paid", summary="Mark as Paid", description="**Access:** org_admin\n\nChanges status: approved → paid")
+@router.patch("/runs/{run_id}/mark-paid", summary="Mark as Paid", description="**Access:** org_admin")
 async def mark_paid(run_id: str = Path(...), db=Depends(get_database), current_user: dict = Depends(_admin)):
     return await PayrollService(db).mark_paid(run_id, current_user)
 
 # PAYSLIPS
-@router.get("/payslips", summary="List Payslips (HR)", description="**Access:** org_admin, hr_admin\n\nFilter by month, year, employee, department.")
+@router.get("/payslips", summary="List Payslips (HR)", description="**Access:** org_admin, hr_admin")
 async def get_payslips(month: Optional[int] = Query(None), year: Optional[int] = Query(None), employee_id: Optional[str] = Query(None), department: Optional[str] = Query(None), organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await PayrollService(db).get_payslips(current_user, month, year, employee_id, department, organization_id)
 
-@router.get("/payslips/me", summary="My Payslips (Employee)", description="**Access:** employee\n\nView own payslips.")
+@router.get("/payslips/me", summary="My Payslips", description="**Access:** employee")
 async def get_my_payslips(year: Optional[int] = Query(None), db=Depends(get_database), current_user: dict = Depends(_emp)):
     return await PayrollService(db).get_my_payslips(current_user, year)
 
-@router.get("/payslips/{payslip_id}", summary="Get Payslip Detail", description="**Access:** org_admin, hr_admin, employee (own only)")
+@router.get("/payslips/{payslip_id}", summary="Get Payslip Detail", description="**Access:** all (employee sees own only)")
 async def get_payslip_detail(payslip_id: str = Path(...), db=Depends(get_database), current_user: dict = Depends(_any)):
     return await PayrollService(db).get_payslip_detail(payslip_id, current_user)
 
-@router.put("/payslips/{payslip_id}", summary="Edit Payslip", description="**Access:** org_admin, hr_admin\n\nEdit bonus/TDS/deductions before approval. System recalculates net.")
-async def edit_payslip(data: EditPayslipRequest, payslip_id: str = Path(...), db=Depends(get_database), current_user: dict = Depends(_hr)):
-    return await PayrollService(db).edit_payslip(payslip_id, data.model_dump(exclude_unset=True), current_user)
-
 # ADJUSTMENTS
-@router.post("/adjustments", status_code=201, summary="Add Adjustment", description="**Access:** org_admin, hr_admin\n\nAdd bonus/deduction/reimbursement for next payroll run.")
+@router.post("/adjustments", status_code=201, summary="Add Adjustment", description="**Access:** org_admin, hr_admin")
 async def add_adjustment(data: AdjustmentRequest, organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await PayrollService(db).add_adjustment(data.model_dump(), current_user, organization_id)
 
@@ -168,10 +195,24 @@ async def get_adjustments(employee_id: Optional[str] = Query(None), month: Optio
     return await PayrollService(db).get_adjustments(current_user, employee_id, month, year, type, organization_id)
 
 # REPORTS
-@router.get("/reports/summary", summary="Monthly Payroll Summary", description="**Access:** org_admin, hr_admin\n\nTotal gross/net/deductions + department breakdown.")
+@router.get("/reports/summary", summary="Monthly Summary", description="**Access:** org_admin, hr_admin")
 async def report_summary(month: Optional[int] = Query(None), year: Optional[int] = Query(None), organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await PayrollService(db).report_summary(current_user, month, year, organization_id)
 
-@router.get("/reports/annual", summary="Annual Statement", description="**Access:** org_admin, hr_admin\n\nEmployee annual earnings + TDS (Form 16 data).")
+@router.get("/reports/annual", summary="Annual Statement", description="**Access:** org_admin, hr_admin")
 async def report_annual(employee_id: str = Query(...), year: Optional[int] = Query(None), organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await PayrollService(db).report_annual(current_user, employee_id, year, organization_id)
+
+
+@router.get("/reports/bank-transfer", summary="Bank Transfer Report", description="**Access:** org_admin, hr_admin\n\nList of employees with net pay + bank details for bulk payment.")
+async def report_bank_transfer(month: Optional[int] = Query(None), year: Optional[int] = Query(None), organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
+    return await PayrollService(db).report_bank_transfer(current_user, month, year, organization_id)
+
+
+@router.get("/reports/salary-register", summary="Salary Register", description="**Access:** org_admin, hr_admin\n\nDetailed register with all salary components for every employee.")
+async def report_salary_register(month: Optional[int] = Query(None), year: Optional[int] = Query(None), department: Optional[str] = Query(None), organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
+    return await PayrollService(db).report_salary_register(current_user, month, year, department, organization_id)
+
+@router.get("/reports/department", summary="Department Payroll Summary", description="**Access:** org_admin, hr_admin\n\nDepartment-wise totals (gross, net, PF, ESI, PT, LOP, employer cost).")
+async def report_department(month: Optional[int] = Query(None), year: Optional[int] = Query(None), organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
+    return await PayrollService(db).report_department_summary(current_user, month, year, organization_id)

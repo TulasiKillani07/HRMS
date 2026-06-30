@@ -3,38 +3,72 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
-class PayrollConfigModel(BaseModel):
-    """Org-level payroll config — stored in db.payroll_configs"""
+# ---------------------------------------------------------------------------
+# Phase 1: Company Payroll Settings (one per org)
+# ---------------------------------------------------------------------------
+
+class CompanyPayrollSettingsModel(BaseModel):
+    """One document per company — stored in db.company_payroll_settings"""
     organization_id: str
-    # Dynamic earning components (each has name + percentage of CTC)
-    earning_components: List[dict] = [
-        {"name": "Basic", "percentage": 40},
-        {"name": "HRA", "percentage": 20},
-        {"name": "Special Allowance", "percentage": 15}
-    ]
-    # Dynamic deduction components
-    deduction_components: List[dict] = [
-        {"name": "PF", "percentage": 12, "basis": "basic"},         # % of basic
-        {"name": "ESI", "percentage": 0.75, "basis": "gross", "limit": 21000},
-        {"name": "Professional Tax", "amount": 200, "type": "fixed"},
-        {"name": "TDS", "percentage": 0, "basis": "gross_after_lop"}
-    ]
-    # Dynamic employer contribution components
-    employer_components: List[dict] = [
-        {"name": "PF Employer", "percentage": 12, "basis": "basic"},
-        {"name": "ESI Employer", "percentage": 3.25, "basis": "gross", "limit": 21000},
-        {"name": "Gratuity", "percentage": 0, "basis": "basic"},
-        {"name": "Insurance", "amount": 0, "type": "fixed"}
-    ]
-    # LOP settings
-    lop_deduction_basis: str = "gross"           # gross | basic | ctc
-    lop_calculation: str = "working_days"        # calendar_days | working_days
-    # Pay settings
-    pay_day: int = 28
-    pay_cycle: str = "monthly"
+
+    # Section 1: Salary Structure
+    salary_structure: dict = {
+        "basic_percentage": 40,
+        "hra_percentage": 20,
+        "special_allowance_percentage": 15,
+        "other_percentage": 0
+        # Note: total must = 100
+    }
+
+    # Section 2: Provident Fund (PF)
+    pf: dict = {
+        "enabled": True,
+        "employee_percentage": 12,
+        "employer_percentage": 12,
+        "pf_applicable_on": "full_basic",    # full_basic | pf_wage_ceiling
+        "pf_wage_ceiling": 15000,
+        "employer_pf_included_in_ctc": True
+    }
+
+    # Section 3: Employee State Insurance (ESI)
+    esi: dict = {
+        "enabled": True,
+        "employee_percentage": 0.75,
+        "employer_percentage": 3.25,
+        "salary_limit": 21000,
+        "employer_esi_included_in_ctc": True
+    }
+
+    # Section 4: Professional Tax (PT)
+    professional_tax: dict = {
+        "enabled": True,
+        "state": "Telangana",
+        "amount": 200
+        # Future: slabs support
+    }
+
+    # Section 5: Loss of Pay (LOP)
+    lop: dict = {
+        "calculation": "working_days",          # working_days | calendar_days
+        "deduction_basis": "gross"              # gross | basic | ctc
+    }
+
+    # Section 6: Payroll Schedule
+    payroll_schedule: dict = {
+        "pay_day": 28,
+        "lock_after_processing": True,          # Lock payroll after processing
+        "allow_reprocessing": False             # Allow re-running payroll for a month
+    }
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+
+# ---------------------------------------------------------------------------
+# Phase 2: Payroll Run
+# ---------------------------------------------------------------------------
 
 class PayrollRunModel(BaseModel):
     """Payroll run — stored in db.payroll_runs"""
@@ -56,6 +90,10 @@ class PayrollRunModel(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+# ---------------------------------------------------------------------------
+# Phase 2: Payslip
+# ---------------------------------------------------------------------------
+
 class PayslipModel(BaseModel):
     """Employee payslip — stored in db.payslips"""
     organization_id: str
@@ -66,20 +104,37 @@ class PayslipModel(BaseModel):
     department: str
     month: int
     year: int
+    monthly_ctc: float = 0
     working_days: int = 0
     days_worked: int = 0
     lop_days: int = 0
     earnings: dict = {}
-    gross_pay: float = 0
+    gross_salary: float = 0
+    lop_deduction: float = 0
+    gross_after_lop: float = 0
     deductions: dict = {}
     total_deductions: float = 0
-    net_pay: float = 0
     employer_contributions: dict = {}
+    total_employer_cost: float = 0
+    net_pay: float = 0
+    # Phase 5: History fields
+    pf_employee: float = 0
+    esi_employee: float = 0
+    professional_tax: float = 0
+    pf_employer: float = 0
+    esi_employer: float = 0
     status: str = "processed"                    # processed | approved | paid
+    generated_by: Optional[str] = None
+    generated_by_name: Optional[str] = None
+    generated_at: Optional[datetime] = None
     paid_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+
+# ---------------------------------------------------------------------------
+# Payroll Adjustment
+# ---------------------------------------------------------------------------
 
 class PayrollAdjustmentModel(BaseModel):
     """Bonus/deduction for next payroll — stored in db.payroll_adjustments"""
@@ -91,6 +146,6 @@ class PayrollAdjustmentModel(BaseModel):
     description: str
     month: int
     year: int
-    applied: bool = False                        # True after payroll run processes it
+    applied: bool = False
     created_by: str
     created_at: datetime = Field(default_factory=datetime.utcnow)

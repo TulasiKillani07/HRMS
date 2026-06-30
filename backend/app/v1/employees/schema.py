@@ -37,6 +37,12 @@ class EmployeeCreateRequest(BaseModel):
         ...,
         description="true = fresher (no prior experience), false = experienced."
     )
+    # PF Details (HR fills)
+    pf_applicable: bool = Field(False, description="Is PF applicable for this employee")
+    uan_number: Optional[str] = Field(None, description="UAN number (required if pf_applicable is true)")
+    # ESI Details (HR fills)
+    esi_applicable: bool = Field(False, description="Is ESI applicable for this employee")
+    esic_number: Optional[str] = Field(None, description="ESIC number (required if esi_applicable is true)")
 
     class Config:
         json_schema_extra = {
@@ -238,18 +244,13 @@ class GovernmentIDsRequest(BaseModel):
     pan: Optional[GovIDEntryRequest] = None
     aadhaar: Optional[GovIDEntryRequest] = None
     passport: Optional[GovIDEntryRequest] = None
-    uan: Optional[GovIDEntryRequest] = Field(
-        None,
-        description="Universal Account Number (EPFO) — optional for all employees"
-    )
 
     class Config:
         json_schema_extra = {
             "example": {
                 "pan": {"number": "ABCDE1234F", "document_url": "https://res.cloudinary.com/..."},
                 "aadhaar": {"number": "1234 5678 9012", "document_url": "https://res.cloudinary.com/..."},
-                "passport": {"number": "N1234567", "document_url": "https://res.cloudinary.com/..."},
-                "uan": {"number": "100123456789", "document_url": None}
+                "passport": {"number": "N1234567", "document_url": "https://res.cloudinary.com/..."}
             }
         }
 
