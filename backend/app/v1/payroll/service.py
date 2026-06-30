@@ -111,7 +111,7 @@ class PayrollService:
             raise HTTPException(status_code=400, detail="No active employees found")
 
         month_str = f"{year}-{month:02d}"
-        working_days = calculate_working_days(month, year)
+        working_days = calculate_working_days(month, year, settings.get("lop", {}))
 
         # Create run
         run = PayrollRunModel(
@@ -176,16 +176,18 @@ class PayrollService:
         lop_deduction = lop_result["lop_deduction"]
         gross_after_lop = lop_result["gross_after_lop"]
 
-        # Step 4: PF (only if pf_applicable for this employee)
+        # Step 4: PF (only if pf_applicable for this employee — None treated as True for existing employees)
         pf_settings = settings.get("pf", {})
-        if not emp.get("pf_applicable", False):
+        pf_applicable = emp.get("pf_applicable")
+        if pf_applicable is False:  # explicitly set to False
             pf_result = {"employee_pf": 0, "employer_pf": 0}
         else:
             pf_result = calculate_pf(basic, pf_settings)
 
-        # Step 5: ESI (only if esi_applicable for this employee)
+        # Step 5: ESI (only if esi_applicable for this employee — None treated as True)
         esi_settings = settings.get("esi", {})
-        if not emp.get("esi_applicable", False):
+        esi_applicable = emp.get("esi_applicable")
+        if esi_applicable is False:  # explicitly set to False
             esi_result = {"employee_esi": 0, "employer_esi": 0}
         else:
             esi_result = calculate_esi(gross_after_lop, esi_settings)
