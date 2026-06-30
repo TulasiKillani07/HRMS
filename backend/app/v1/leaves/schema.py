@@ -18,7 +18,6 @@ class LeaveTypeCreateRequest(BaseModel):
     carry_forward: bool = False
     max_carry_forward_days: int = Field(0, ge=0)
     applicable_after_days: int = Field(0, ge=0, description="Available after X days from joining")
-    converts_to_lop: bool = Field(True, description="When exhausted, extra leaves become LOP")
     description: Optional[str] = None
 
     class Config:
@@ -27,12 +26,11 @@ class LeaveTypeCreateRequest(BaseModel):
                 "name": "Casual Leave",
                 "code": "CL",
                 "accrual_type": "monthly",
-                "days_per_year": 12,
-                "days_per_month": 1,
+                "days_per_year": 24,
+                "days_per_month": 2,
                 "is_paid": True,
                 "carry_forward": False,
-                "converts_to_lop": True,
-                "description": "1 per month, converts to LOP when exhausted"
+                "description": "2 per month max"
             }
         }
 
@@ -48,7 +46,6 @@ class LeaveTypeUpdateRequest(BaseModel):
     carry_forward: Optional[bool] = None
     max_carry_forward_days: Optional[int] = Field(None, ge=0)
     applicable_after_days: Optional[int] = Field(None, ge=0)
-    converts_to_lop: Optional[bool] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -56,9 +53,8 @@ class LeaveTypeUpdateRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "accrual_type": "monthly",
-                "days_per_month": 1.5,
-                "days_per_year": 18,
-                "converts_to_lop": True
+                "days_per_month": 2,
+                "days_per_year": 24
             }
         }
 
@@ -74,7 +70,6 @@ class LeaveTypeResponse(BaseModel):
     carry_forward: bool
     max_carry_forward_days: int
     applicable_after_days: int
-    converts_to_lop: bool = True
     description: Optional[str] = None
     is_active: bool
     created_at: datetime

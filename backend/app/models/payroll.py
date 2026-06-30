@@ -6,19 +6,32 @@ from pydantic import BaseModel, Field
 class PayrollConfigModel(BaseModel):
     """Org-level payroll config — stored in db.payroll_configs"""
     organization_id: str
-    # Salary split percentages (of CTC)
-    basic_percentage: float = 40.0               # Basic = CTC × 40%
-    hra_percentage: float = 20.0                 # HRA = CTC × 20%
-    special_allowance_percentage: float = 15.0   # Special = CTC × 15%
-    # Statutory deductions
-    pf_percentage: float = 12.0
-    esi_employee_percentage: float = 0.75
-    esi_employer_percentage: float = 3.25
-    esi_limit: float = 21000
-    professional_tax: float = 200
+    # Dynamic earning components (each has name + percentage of CTC)
+    earning_components: List[dict] = [
+        {"name": "Basic", "percentage": 40},
+        {"name": "HRA", "percentage": 20},
+        {"name": "Special Allowance", "percentage": 15}
+    ]
+    # Dynamic deduction components
+    deduction_components: List[dict] = [
+        {"name": "PF", "percentage": 12, "basis": "basic"},         # % of basic
+        {"name": "ESI", "percentage": 0.75, "basis": "gross", "limit": 21000},
+        {"name": "Professional Tax", "amount": 200, "type": "fixed"},
+        {"name": "TDS", "percentage": 0, "basis": "gross_after_lop"}
+    ]
+    # Dynamic employer contribution components
+    employer_components: List[dict] = [
+        {"name": "PF Employer", "percentage": 12, "basis": "basic"},
+        {"name": "ESI Employer", "percentage": 3.25, "basis": "gross", "limit": 21000},
+        {"name": "Gratuity", "percentage": 0, "basis": "basic"},
+        {"name": "Insurance", "amount": 0, "type": "fixed"}
+    ]
+    # LOP settings
+    lop_deduction_basis: str = "gross"           # gross | basic | ctc
+    lop_calculation: str = "working_days"        # calendar_days | working_days
+    # Pay settings
     pay_day: int = 28
     pay_cycle: str = "monthly"
-    lop_calculation: str = "calendar_days"       # calendar_days | working_days
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

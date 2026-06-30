@@ -28,16 +28,13 @@ def _any(u: dict = Depends(get_current_user)):
 
 # Schemas
 class PayrollConfigRequest(BaseModel):
-    basic_percentage: Optional[float] = Field(None, gt=0, le=100, description="Basic % of CTC (e.g., 40)")
-    hra_percentage: Optional[float] = Field(None, ge=0, le=100, description="HRA % of CTC (e.g., 20)")
-    special_allowance_percentage: Optional[float] = Field(None, ge=0, le=100, description="Special Allowance % of CTC (e.g., 15)")
-    pf_percentage: Optional[float] = None
-    esi_employee_percentage: Optional[float] = None
-    esi_employer_percentage: Optional[float] = None
-    esi_limit: Optional[float] = None
-    professional_tax: Optional[float] = None
+    earning_components: Optional[list] = Field(None, description="[{name, percentage}] — earning components from CTC")
+    deduction_components: Optional[list] = Field(None, description="[{name, percentage, basis, limit?, type?, amount?}]")
+    employer_components: Optional[list] = Field(None, description="[{name, percentage, basis, limit?, type?, amount?}]")
+    lop_deduction_basis: Optional[str] = Field(None, description="gross | basic | ctc")
+    lop_calculation: Optional[str] = Field(None, description="working_days | calendar_days")
     pay_day: Optional[int] = None
-    lop_calculation: Optional[str] = None
+    pay_cycle: Optional[str] = None
 
 class RunPayrollRequest(BaseModel):
     month: int = Field(..., ge=1, le=12)
@@ -59,11 +56,67 @@ class EditPayslipRequest(BaseModel):
 
 
 # CONFIG
-@router.get("/config", summary="Get Payroll Config", description="**Access:** org_admin, hr_admin")
+@router.get("/config", summary="Get Payroll Config", description="""
+**Purpose:** Get org-level payroll configuration.
+
+**Access:** `org_admin`, `hr_admin`
+
+**Response 200:**
+```json
+{
+  "basic_percentage": 40,
+  "hra_percentage": 20,
+  "special_allowance_percentage": 15,
+  "pf_percentage": 12,
+  "esi_employee_percentage": 0.75,
+  "esi_employer_percentage": 3.25,
+  "esi_limit": 21000,
+  "professional_tax": 200,
+  "lop_deduction_basis": "gross",
+  "pay_day": 28,
+  "pay_cycle": "monthly",
+  "lop_calculation": "calendar_days"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| basic_percentage | Basic = CTC × this % |
+| hra_percentage | HRA = CTC × this % |
+| special_allowance_percentage | Special = CTC × this % |
+| pf_percentage | PF deduction % of Basic |
+| esi_employee_percentage | ESI employee % |
+| esi_limit | ESI applies only if gross ≤ this |
+| professional_tax | Monthly PT amount |
+| lop_deduction_basis | `"gross"` or `"basic"` — LOP per day = (basis / working days) |
+| pay_day | Day of month salary is paid |
+| lop_calculation | `"calendar_days"` or `"working_days"` |
+""")
 async def get_config(organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await PayrollService(db).get_config(current_user, organization_id)
 
-@router.put("/config", summary="Update Payroll Config", description="**Access:** org_admin\n\nSet PF%, ESI%, PT, pay day, LOP calculation method.")
+@router.put("/config", summary="Update Payroll Config", description="""
+**Purpose:** Set/update payroll configuration. All fields optional — send only what needs changing.
+
+**Access:** `org_admin`
+
+**Request Body (all optional):**
+```json
+{
+  "basic_percentage": 40,
+  "hra_percentage": 20,
+  "special_allowance_percentage": 15,
+  "pf_percentage": 12,
+  "professional_tax": 200,
+  "lop_deduction_basis": "gross",
+  "pay_day": 28
+}
+```
+
+**LOP Deduction Basis:**
+- `"gross"` — LOP per day = Monthly Gross / Working Days
+- `"basic"` — LOP per day = Basic / Working Days
+""")
 async def update_config(data: PayrollConfigRequest, organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_admin)):
     return await PayrollService(db).update_config(data.model_dump(exclude_unset=True), current_user, organization_id)
 

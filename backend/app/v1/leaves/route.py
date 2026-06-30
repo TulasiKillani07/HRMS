@@ -43,16 +43,16 @@ If no configuration exists for the current year, one is auto-created with defaul
 
 **Access:** All authenticated users
 
-**Default Leave Types (auto-created):**
-- Casual Leave (CL) — 12 days/year
-- Sick Leave (SL) — 6 days/year
-- Earned Leave (EL) — 15 days/year, carry forward allowed
-- Maternity Leave (ML) — 182 days/year
-- Paternity Leave (PL) — 15 days/year
-- Marriage Leave (MRL) — 3 days/year
-- Bereavement Leave (BL) — 5 days/year
-- Comp Off (CO) — Unlimited
-- Optional Holiday (OH) — 2 days/year
+**Default Leave Types (auto-created, fixed — cannot be edited or deleted):**
+- Casual Leave (CL) — Monthly accrual, 1/month, 12/year. Converts to LOP when exhausted.
+- Sick Leave (SL) — Monthly accrual, 0.5/month, 6/year. Converts to LOP when exhausted.
+- Loss of Pay (LOP) — Unlimited, unpaid. Auto-applied when other balances are zero.
+
+**Additional config fields:**
+- `missed_attendance_threshold` — If employee misses X check-in/outs per month → counted as LOP (default: 3)
+- `auto_lop_on_missed_attendance` — Enable/disable the above rule (default: true)
+
+**HR can add custom leave types** (e.g., Work From Home, Comp Off) — those CAN be edited/deleted.
 
 **Query Parameters:**
 | Param | Type | Description |

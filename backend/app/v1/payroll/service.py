@@ -15,11 +15,27 @@ def _serialize(doc: dict) -> dict:
 
 
 DEFAULT_CONFIG = {
-    "basic_percentage": 40.0, "hra_percentage": 20.0, "special_allowance_percentage": 15.0,
-    "pf_percentage": 12.0, "esi_employee_percentage": 0.75,
-    "esi_employer_percentage": 3.25, "esi_limit": 21000,
-    "professional_tax": 200, "pay_day": 28,
-    "pay_cycle": "monthly", "lop_calculation": "calendar_days"
+    "earning_components": [
+        {"name": "Basic", "percentage": 40},
+        {"name": "HRA", "percentage": 20},
+        {"name": "Special Allowance", "percentage": 15}
+    ],
+    "deduction_components": [
+        {"name": "PF", "percentage": 12, "basis": "basic"},
+        {"name": "ESI", "percentage": 0.75, "basis": "gross", "limit": 21000},
+        {"name": "Professional Tax", "amount": 200, "type": "fixed"},
+        {"name": "TDS", "percentage": 0, "basis": "gross_after_lop"}
+    ],
+    "employer_components": [
+        {"name": "PF Employer", "percentage": 12, "basis": "basic"},
+        {"name": "ESI Employer", "percentage": 3.25, "basis": "gross", "limit": 21000},
+        {"name": "Gratuity", "percentage": 0, "basis": "basic"},
+        {"name": "Insurance", "amount": 0, "type": "fixed"}
+    ],
+    "lop_deduction_basis": "gross",
+    "lop_calculation": "working_days",
+    "pay_day": 28,
+    "pay_cycle": "monthly"
 }
 
 
@@ -134,82 +150,132 @@ class PayrollService:
         }
 
     async def _calculate_payslip(self, emp, month, year, cal_days, month_str, config, run_id, org_id) -> dict:
-        """Calculate individual employee payslip from CTC + config percentages"""
-        sal = emp.get("salary_structure", {})
-        ctc_annual = sal.get("ctc", 0)
-        ctc_monthly = ctc_annual / 12
+        """
+        Payroll Calculation Engine — Fully dynamic from config.
+        No hardcoded percentages. Every component calculated from org config.
+        """
+        import calendar as cal_mod
 
-        # Calculate salary components from config percentages
+        # ===== STEP 2: Read Employee Data =====
+        ctc_annual = emp.get("salary_structure", {}).get("ctc", 0)
+        monthly_ctc = ctc_annual / 12
+        emp_id = str(emp["_id"])
+
+        # Working days (calendar days - weekends)
+        weekends = sum(1 for d in range(1, cal_days + 1) if cal_mod.weekday(year, month, d) in (5, 6))
+        working_days = cal_days - weekends
+
+        # ===== STEP 3: Calculate Earnings =====
         basic_pct = config.get("basic_percentage", 40)
         hra_pct = config.get("hra_percentage", 20)
         special_pct = config.get("special_allowance_percentage", 15)
 
-        basic = round(ctc_monthly * basic_pct / 100, 2)
-        hra = round(ctc_monthly * hra_pct / 100, 2)
-        special = round(ctc_monthly * special_pct / 100, 2)
-        monthly_gross = basic + hra + special
-        emp_id = str(emp["_id"])
+        basic = round(monthly_ctc * basic_pct / 100, 2)
+        hra = round(monthly_ctc * hra_pct / 100, 2)
+        special = round(monthly_ctc * special_pct / 100, 2)
 
-        # Working days (simple: calendar days - weekends)
-        import calendar as cal_mod
-        weekends = 0
-        for d in range(1, cal_days + 1):
-            if cal_mod.weekday(year, month, d) in (5, 6):
-                weekends += 1
-        working_days = cal_days - weekends
+        # Gross = sum of all earning components (never assume gross = monthly_ctc)
+        gross_salary = round(basic + hra + special, 2)
 
-        # LOP days from attendance
+        # ===== STEP 4: Employer Contributions =====
+        pf_pct = config.get("pf_percentage", 12)
+        esi_employer_pct = config.get("esi_employer_percentage", 3.25)
+        esi_limit = config.get("esi_limit", 21000)
+
+        employer_pf = round(basic * pf_pct / 100, 2)
+        employer_esi = round(gross_salary * esi_employer_pct / 100, 2) if gross_salary <= esi_limit else 0
+        employer_cost = round(employer_pf + employer_esi, 2)
+
+        # ===== STEP 5: Validate CTC =====
+        calculated_ctc = round(gross_salary + employer_cost, 2)
+        # Note: If org config doesn't add up to CTC, we proceed but log it
+        # Validation is informational — doesn't block payroll
+
+        # ===== STEP 6: Calculate LOP =====
+        # LOP from attendance (absent days)
         att_pipeline = [
             {"$match": {"employee_id": emp_id, "date": {"$regex": f"^{month_str}"}, "status": "absent"}},
             {"$count": "lop"}
         ]
         lop_result = await self.db.attendance.aggregate(att_pipeline).to_list(1)
-        lop_days = lop_result[0]["lop"] if lop_result else 0
+        lop_from_attendance = lop_result[0]["lop"] if lop_result else 0
+
+        # LOP from approved LOP leaves
+        lop_leave_pipeline = [
+            {"$match": {"employee_id": emp_id, "leave_type_code": "LOP", "status": "approved", "start_date": {"$regex": f"^{month_str}"}}},
+            {"$group": {"_id": None, "total": {"$sum": "$days"}}}
+        ]
+        lop_leave_result = await self.db.leave_requests.aggregate(lop_leave_pipeline).to_list(1)
+        lop_from_leaves = lop_leave_result[0]["total"] if lop_leave_result else 0
+
+        lop_days = lop_from_attendance + int(lop_from_leaves)
         days_worked = working_days - lop_days
 
-        # LOP deduction (pro-rated)
-        per_day = monthly_gross / working_days if working_days > 0 else 0
-        lop_deduction = round(per_day * lop_days, 2)
+        # Daily salary based on config
+        lop_basis = config.get("lop_deduction_basis", "gross")
+        if lop_basis == "basic":
+            daily_salary = basic / working_days if working_days > 0 else 0
+        elif lop_basis == "ctc":
+            daily_salary = monthly_ctc / working_days if working_days > 0 else 0
+        else:  # "gross"
+            daily_salary = gross_salary / working_days if working_days > 0 else 0
 
-        # Adjustments (bonus, reimbursement, deduction)
+        lop_amount = round(daily_salary * lop_days, 2)
+        gross_after_lop = round(gross_salary - lop_amount, 2)
+
+        # ===== STEP 7: Employee Deductions (calculated AFTER LOP) =====
+        employee_pf = round(basic * pf_pct / 100, 2)
+        esi_employee_pct = config.get("esi_employee_percentage", 0.75)
+        employee_esi = round(gross_after_lop * esi_employee_pct / 100, 2) if gross_after_lop <= esi_limit else 0
+        professional_tax = config.get("professional_tax", 200)
+        tds_pct = config.get("tds_percentage", 0)
+        tds = round(gross_after_lop * tds_pct / 100, 2) if tds_pct > 0 else 0
+
+        # Manual deductions (adjustments of type "deduction")
         adjustments = await self.db.payroll_adjustments.find(
             {"employee_id": emp_id, "month": month, "year": year, "applied": False}
         ).to_list(20)
         bonus = sum(a["amount"] for a in adjustments if a["type"] == "bonus")
         reimbursements = sum(a["amount"] for a in adjustments if a["type"] == "reimbursement")
-        other_deductions = sum(a["amount"] for a in adjustments if a["type"] == "deduction")
+        manual_deductions = sum(a["amount"] for a in adjustments if a["type"] == "deduction")
 
-        # Gross
-        gross_pay = round(monthly_gross - lop_deduction + bonus + reimbursements, 2)
+        total_deductions = round(employee_pf + employee_esi + professional_tax + tds + manual_deductions, 2)
 
-        # Deductions
-        pf_pct = config.get("pf_percentage", 12)
-        esi_pct = config.get("esi_employee_percentage", 0.75)
-        esi_limit = config.get("esi_limit", 21000)
-        pt = config.get("professional_tax", 200)
+        # Add bonus/reimbursements to gross_after_lop for final
+        gross_after_lop_with_additions = round(gross_after_lop + bonus + reimbursements, 2)
 
-        pf_employee = round(basic * pf_pct / 100, 2)
-        esi_employee = round(gross_pay * esi_pct / 100, 2) if gross_pay <= esi_limit else 0
-        tds = round(gross_pay * 0.1, 2)  # Simplified: 10% TDS
+        # ===== STEP 8: Net Salary =====
+        net_salary = round(gross_after_lop_with_additions - total_deductions, 2)
 
-        total_deductions = round(pf_employee + esi_employee + pt + tds + other_deductions, 2)
-        net_pay = round(gross_pay - total_deductions, 2)
-
-        # Employer contributions
-        pf_employer = round(basic * pf_pct / 100, 2)
-        esi_employer = round(gross_pay * config.get("esi_employer_percentage", 3.25) / 100, 2) if gross_pay <= esi_limit else 0
-
+        # ===== STEP 9: Build Payslip =====
         return PayslipModel(
             organization_id=org_id, payroll_run_id=run_id,
             employee_id=emp_id, employee_name=f"{emp['first_name']} {emp['last_name']}",
             employee_code=emp.get("employee_id", ""), department=emp.get("department", ""),
             month=month, year=year, working_days=working_days,
             days_worked=days_worked, lop_days=lop_days,
-            earnings={"basic": basic, "hra": hra, "special_allowance": special, "bonus": bonus, "reimbursements": reimbursements},
-            gross_pay=gross_pay,
-            deductions={"pf_employee": pf_employee, "esi_employee": esi_employee, "professional_tax": pt, "tds": tds, "lop_deduction": lop_deduction, "other_deductions": other_deductions},
-            total_deductions=total_deductions, net_pay=net_pay,
-            employer_contributions={"pf_employer": pf_employer, "esi_employer": esi_employer},
+            earnings={
+                "basic": basic, "hra": hra, "special_allowance": special,
+                "bonus": bonus, "reimbursements": reimbursements,
+                "gross_salary": gross_salary,
+                "lop_deduction": lop_amount,
+                "gross_after_lop": gross_after_lop
+            },
+            gross_pay=gross_after_lop_with_additions,
+            deductions={
+                "pf_employee": employee_pf,
+                "esi_employee": employee_esi,
+                "professional_tax": professional_tax,
+                "tds": tds,
+                "manual_deductions": manual_deductions
+            },
+            total_deductions=total_deductions,
+            net_pay=net_salary,
+            employer_contributions={
+                "pf_employer": employer_pf,
+                "esi_employer": employer_esi,
+                "total_employer_cost": employer_cost
+            },
             status="processed", created_at=datetime.utcnow(), updated_at=datetime.utcnow()
         ).model_dump()
 

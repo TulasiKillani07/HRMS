@@ -140,7 +140,6 @@ class LeaveService:
             "carry_forward": data.carry_forward,
             "max_carry_forward_days": data.max_carry_forward_days,
             "applicable_after_days": data.applicable_after_days,
-            "converts_to_lop": data.converts_to_lop,
             "description": data.description,
             "is_active": True,
             "created_at": datetime.utcnow(),
@@ -183,15 +182,6 @@ class LeaveService:
                 break
 
         if target_idx is None:
-            raise HTTPException(status_code=404, detail="Leave type not found")
-
-        # Protect default types (CL, SL, EL, LOP) from editing
-        PROTECTED_CODES = ["CL", "SL", "EL", "LOP"]
-        if leave_types[target_idx].get("code") in PROTECTED_CODES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot edit default leave type '{leave_types[target_idx]['code']}'. It is system-defined."
-            )
             raise HTTPException(status_code=404, detail="Leave type not found")
 
         # Check code duplication if code is being changed
@@ -255,14 +245,6 @@ class LeaveService:
 
         if not target:
             raise HTTPException(status_code=404, detail="Leave type not found")
-
-        # Protect default types (CL, SL, EL, LOP) from deletion
-        PROTECTED_CODES = ["CL", "SL", "EL", "LOP"]
-        if target.get("code") in PROTECTED_CODES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot delete default leave type '{target['code']}'. It is system-defined."
-            )
 
         # Check if any approved/pending leaves exist for this type
         leave_count = await self.db.leave_requests.count_documents({
@@ -429,7 +411,31 @@ class LeaveService:
                 detail=f"Overlapping leave exists from {overlap['start_date']} to {overlap['end_date']} (status: {overlap['status']})"
             )
 
-        # Check balance (skip for unlimited types like Comp Off)
+        # Check monthly limit
+        days_per_month = leave_type.get("days_per_month", 0)
+        if days_per_month > 0:
+            # Get current month usage
+            current_month = datetime.utcnow().strftime("%Y-%m")
+            month_pipeline = [
+                {"$match": {
+                    "employee_id": employee_id,
+                    "leave_type_code": data.leave_type_code.upper(),
+                    "status": {"$in": ["pending", "approved"]},
+                    "start_date": {"$regex": f"^{current_month}"}
+                }},
+                {"$group": {"_id": None, "total": {"$sum": "$days"}}}
+            ]
+            month_result = await self.db.leave_requests.aggregate(month_pipeline).to_list(1)
+            used_this_month = month_result[0]["total"] if month_result else 0
+
+            if used_this_month + days > days_per_month:
+                remaining = days_per_month - used_this_month
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Monthly limit exceeded for {leave_type['name']}. Limit: {days_per_month}/month, Used this month: {used_this_month}, Remaining: {remaining}"
+                )
+
+        # Check yearly balance
         if leave_type["days_per_year"] != -1:
             used = await self._get_used_leaves(
                 employee_id, data.leave_type_code.upper(), datetime.utcnow().year

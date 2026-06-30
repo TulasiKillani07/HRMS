@@ -149,6 +149,7 @@ class PersonalDetailsRequest(BaseModel):
     gender: str = Field(..., description="male | female | other")
     blood_group: Optional[str] = None
     marital_status: Optional[str] = Field(None, description="single | married | divorced")
+    resume_url: Optional[str] = Field(None, description="Cloudinary URL of uploaded resume (PDF)")
 
     class Config:
         json_schema_extra = {
@@ -156,7 +157,8 @@ class PersonalDetailsRequest(BaseModel):
                 "date_of_birth": "1995-03-15",
                 "gender": "male",
                 "blood_group": "O+",
-                "marital_status": "single"
+                "marital_status": "single",
+                "resume_url": "https://res.cloudinary.com/dxbjp7jno/raw/upload/v1/hrms/resumes/rahul_resume.pdf"
             }
         }
 
