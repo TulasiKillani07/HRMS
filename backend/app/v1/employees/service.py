@@ -659,6 +659,15 @@ class EmployeeService:
         if emp.get("status") == "inactive":
             raise HTTPException(status_code=403, detail="Inactive employee cannot be updated")
 
+        # Special validation for personal_details — resume_url is mandatory for experienced employees
+        if section == "personal_details":
+            is_fresher = emp.get("is_fresher")
+            if not section_data.get("resume_url"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Resume URL is required. Please upload your resume first via POST /upload/ and provide the URL."
+                )
+
         # Special validation for policy_acceptance
         if section == "policy_acceptance":
             if not section_data.get("accepted"):

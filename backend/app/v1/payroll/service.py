@@ -159,6 +159,32 @@ class PayrollService:
         gross_salary = earnings["gross_salary"]
         basic = earnings["basic"]
 
+        # Step 1b: Adjust gross if employer contributions are INCLUDED in CTC
+        # If pf.employer_pf_included_in_ctc = true, employer PF is already in CTC
+        # so we need to deduct employer PF from gross to get employee's actual gross
+        pf_settings = settings.get("pf", {})
+        esi_settings = settings.get("esi", {})
+
+        employer_pf_in_ctc = pf_settings.get("employer_pf_included_in_ctc", False)
+        employer_esi_in_ctc = esi_settings.get("employer_esi_included_in_ctc", esi_settings.get("employer_included_in_ctc", False))
+
+        if employer_pf_in_ctc and pf_settings.get("enabled", False):
+            emp_r_pf_pct = pf_settings.get("employer_percentage", 0)
+            employer_pf_cost = round(basic * emp_r_pf_pct / 100, 2)
+            gross_salary = round(gross_salary - employer_pf_cost, 2)
+            earnings["gross_salary"] = gross_salary
+
+        if employer_esi_in_ctc and esi_settings.get("enabled", False):
+            emp_r_esi_pct = esi_settings.get("employer_percentage", 0)
+            esi_limit = esi_settings.get("salary_limit", 21000)
+            if gross_salary <= esi_limit:
+                employer_esi_cost = round(gross_salary * emp_r_esi_pct / 100, 2)
+                gross_salary = round(gross_salary - employer_esi_cost, 2)
+                earnings["gross_salary"] = gross_salary
+
+        # Recalculate basic after adjustment (proportional)
+        basic = earnings["basic"]
+
         # Step 2: LOP days (attendance absent + approved LOP leaves)
         att_pipeline = [{"$match": {"employee_id": emp_id, "date": {"$regex": f"^{month_str}"}, "status": "absent"}}, {"$count": "c"}]
         att_r = await self.db.attendance.aggregate(att_pipeline).to_list(1)

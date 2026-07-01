@@ -63,7 +63,10 @@ def calculate_lop(gross_salary: float, basic: float, monthly_ctc: float,
 
 def calculate_pf(basic: float, pf_settings: dict) -> dict:
     """Calculate PF employee + employer from config"""
-    if not pf_settings.get("enabled", False):
+    if not pf_settings:
+        return {"employee_pf": 0, "employer_pf": 0}
+    # Default enabled=True if not explicitly set (handles old configs without enabled field)
+    if not pf_settings.get("enabled", True):
         return {"employee_pf": 0, "employer_pf": 0}
 
     emp_pct = pf_settings.get("employee_percentage")
@@ -97,7 +100,10 @@ def calculate_pf(basic: float, pf_settings: dict) -> dict:
 
 def calculate_esi(gross_after_lop: float, esi_settings: dict) -> dict:
     """Calculate ESI employee + employer from config"""
-    if not esi_settings.get("enabled", False):
+    if not esi_settings:
+        return {"employee_esi": 0, "employer_esi": 0}
+    # Default enabled=True if not explicitly set
+    if not esi_settings.get("enabled", True):
         return {"employee_esi": 0, "employer_esi": 0}
 
     for field in ["employee_percentage", "employer_percentage", "salary_limit"]:
@@ -114,7 +120,11 @@ def calculate_esi(gross_after_lop: float, esi_settings: dict) -> dict:
 
 def calculate_pt(pt_settings: dict) -> float:
     """Calculate Professional Tax from config"""
-    if not pt_settings.get("enabled", False):
+    if not pt_settings:
+        return 0
+    # If 'enabled' is not set but amount exists, treat as enabled
+    enabled = pt_settings.get("enabled", True)
+    if not enabled:
         return 0
     amount = pt_settings.get("amount")
     if amount is None:

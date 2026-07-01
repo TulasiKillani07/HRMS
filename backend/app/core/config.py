@@ -28,7 +28,13 @@ class Settings(BaseSettings):
     
     # CORS
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
-    
+
+    # TalentFinder AI
+    GROQ_API_KEY: str = ""
+    MODEL_NAME: str = "BAAI/bge-base-en-v1.5"
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
+    MAX_LLM_CANDIDATES: int = 5
+
     class Config:
         env_file = ".env"
         case_sensitive = True

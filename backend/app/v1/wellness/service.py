@@ -340,3 +340,76 @@ class WellnessService:
             {"_id": obj_id}, {"$pull": {"participants": emp_id}}
         )
         return {"message": "Unenrolled successfully"}
+
+    # ==================================================================
+    # HR: Mood Entries with full filters
+    # ==================================================================
+
+    async def get_mood_entries(
+        self, current_user: dict, page: int = 1, limit: int = 50,
+        employee_id: str = None, department: str = None,
+        date: str = None, from_date: str = None, to_date: str = None,
+        month: int = None, year: int = None,
+        score: int = None, org_id_param: str = None
+    ) -> dict:
+        """HR sees all mood entries with filters"""
+        from app.utils.helpers import paginate_query
+        org_id = self._org_id(current_user, org_id_param)
+        skip, limit = paginate_query(page, limit)
+
+        query = {"organization_id": org_id}
+
+        if employee_id:
+            query["employee_id"] = employee_id
+        if department:
+            query["department"] = {"$regex": department, "$options": "i"}
+        if score is not None:
+            query["score"] = score
+        if date:
+            query["date"] = date
+        elif from_date and to_date:
+            query["date"] = {"$gte": from_date, "$lte": to_date}
+        elif from_date:
+            query["date"] = {"$gte": from_date}
+        elif to_date:
+            query["date"] = {"$lte": to_date}
+        elif month and year:
+            query["date"] = {"$regex": f"^{year}-{month:02d}"}
+        elif year:
+            query["date"] = {"$regex": f"^{year}"}
+
+        from app.database import get_database
+        total = await self.db.wellness_mood_entries.count_documents(query)
+        cursor = self.db.wellness_mood_entries.find(query).skip(skip).limit(limit).sort("date", -1)
+        entries = await cursor.to_list(length=limit)
+        for e in entries:
+            _serialize(e)
+
+        # Summary stats for the filtered result
+        all_entries = await self.db.wellness_mood_entries.find(query).to_list(5000)
+        scores = [e["score"] for e in all_entries]
+        avg = round(sum(scores) / len(scores), 1) if scores else 0
+
+        score_dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        for s in scores:
+            if s in score_dist:
+                score_dist[s] += 1
+
+        return {
+            "entries": entries,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit,
+            "summary": {
+                "avg_score": avg,
+                "total_entries": len(all_entries),
+                "score_distribution": {
+                    "terrible": score_dist[1],
+                    "low": score_dist[2],
+                    "okay": score_dist[3],
+                    "good": score_dist[4],
+                    "great": score_dist[5]
+                }
+            }
+        }

@@ -28,23 +28,12 @@ class MoodRequest(BaseModel):
         json_schema_extra = {"example": {"score": 4, "note": "Feeling good today"}}
 
 
-class ProgramRequest(BaseModel):
-    name: str = Field(..., min_length=2, max_length=200)
-    description: Optional[str] = None
-    type: str = Field("ongoing", description="ongoing | challenge | event")
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    max_participants: Optional[int] = None
-    class Config:
-        json_schema_extra = {"example": {"name": "Mental Health Support", "description": "Free counseling", "type": "ongoing"}}
-
-
 # ===========================================================================
 # MOOD
 # ===========================================================================
 
 @router.post("/mood", status_code=201, summary="Submit Daily Mood", description="""
-**Purpose:** Employee submits their daily mood (1-5). One entry per day (upsert).
+**Purpose:** Employee submits their daily mood (1-5). One entry per day — cannot resubmit.
 
 **Access:** `employee`
 
@@ -58,6 +47,9 @@ Score: 1 (terrible) → 5 (great)
 ```json
 { "id": "...", "score": 4, "date": "2025-06-24", "note": "...", "streak": 5 }
 ```
+
+**Errors:**
+- `400` — Mood already submitted for today
 """)
 async def submit_mood(data: MoodRequest, db=Depends(get_database), current_user: dict = Depends(_emp)):
     return await WellnessService(db).submit_mood(data.score, data.note, current_user)
@@ -68,7 +60,7 @@ async def submit_mood(data: MoodRequest, db=Depends(get_database), current_user:
 
 **Access:** `employee`
 
-**Query:** days (default: 30)
+**Query:** days (default: 30, max: 365)
 
 **Response 200:**
 ```json
@@ -80,11 +72,11 @@ async def get_mood_history(days: int = Query(30, ge=1, le=365), db=Depends(get_d
 
 
 # ===========================================================================
-# DASHBOARD & ANALYTICS (HR)
+# HR DASHBOARD & ANALYTICS
 # ===========================================================================
 
 @router.get("/dashboard", summary="Wellness Dashboard", description="""
-**Purpose:** HR sees org-wide wellness overview — mood distribution, weekly trend, department scores, at-risk employees.
+**Purpose:** HR sees org-wide wellness overview.
 
 **Access:** `org_admin`, `hr_admin`
 
@@ -93,7 +85,7 @@ async def get_mood_history(days: int = Query(30, ge=1, le=365), db=Depends(get_d
 {
   "wellness_score": 78,
   "mood_distribution": { "great": 8, "good": 15, "okay": 5, "low": 2, "terrible": 1 },
-  "weekly_trend": [{ "day": "Mon", "avg_score": 3.8 }, ...],
+  "weekly_trend": [{ "day": "Mon", "avg_score": 3.8 }],
   "department_scores": { "Engineering": 4.1, "Marketing": 3.2 },
   "at_risk_employees": [{ "employee_name": "Sneha", "avg_score_7d": 2.1 }],
   "participation_rate": 75,
@@ -110,68 +102,62 @@ async def get_dashboard(organization_id: Optional[str] = Query(None), db=Depends
 
 **Access:** `org_admin`, `hr_admin`
 
-**Query:** period (days, default: 30)
-
-**Response 200:**
-```json
-{
-  "avg_score": 3.8, "trend": "improving", "change_vs_last_period": 0.3,
-  "happiest_day": "Friday", "lowest_day": "Monday",
-  "day_of_week_scores": { "Mon": 3.5, "Fri": 4.3 }
-}
-```
+**Query:** period (days, default: 30, min: 7)
 """)
 async def get_analytics(period: int = Query(30, ge=7, le=365), organization_id: Optional[str] = Query(None),
     db=Depends(get_database), current_user: dict = Depends(_hr)):
     return await WellnessService(db).get_analytics(current_user, period, organization_id)
 
 
-# ===========================================================================
-# PROGRAMS
-# ===========================================================================
-
-@router.post("/programs", status_code=201, summary="Create Wellness Program", description="""
-**Purpose:** HR creates a wellness program (mental health support, fitness challenge, etc.)
+@router.get("/mood/entries", summary="All Mood Entries (HR View)", description="""
+**Purpose:** HR and admin view all employee mood entries with full filters.
 
 **Access:** `org_admin`, `hr_admin`
 
-**Request Body:**
-```json
-{ "name": "Mental Health Support", "description": "Free counseling sessions", "type": "ongoing" }
-```
-""")
-async def create_program(data: ProgramRequest, organization_id: Optional[str] = Query(None),
-    db=Depends(get_database), current_user: dict = Depends(_hr)):
-    return await WellnessService(db).create_program(data.model_dump(), current_user, organization_id)
-
-
-@router.get("/programs", summary="List Wellness Programs", description="""
-**Purpose:** View wellness programs. Shows enrollment status for employees.
-
-**Access:** All authenticated users
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| employee_id | string | Filter by specific employee |
+| department | string | Filter by department |
+| date | string | Specific date (YYYY-MM-DD) |
+| from_date | string | Range start (YYYY-MM-DD) |
+| to_date | string | Range end (YYYY-MM-DD) |
+| month | int | Month (1-12) |
+| year | int | Year |
+| score | int | Filter by score 1-5 |
+| page | int | Default 1 |
+| limit | int | Default 50 |
 
 **Response 200:**
 ```json
-{ "programs": [{ "name": "Mental Health Support", "total_participants": 18, "participation": 65, "is_enrolled": true }] }
+{
+  "entries": [
+    { "employee_name": "Rahul Verma", "department": "Engineering", "date": "2025-07-15", "score": 4, "note": "Productive" }
+  ],
+  "total": 150,
+  "summary": {
+    "avg_score": 3.8,
+    "total_entries": 150,
+    "score_distribution": { "terrible": 2, "low": 10, "okay": 45, "good": 70, "great": 23 }
+  }
+}
 ```
 """)
-async def list_programs(organization_id: Optional[str] = Query(None), db=Depends(get_database), current_user: dict = Depends(_any)):
-    return await WellnessService(db).list_programs(current_user, organization_id)
-
-
-@router.post("/programs/{program_id}/enroll", summary="Enroll in Program", description="""
-**Purpose:** Employee enrolls in a wellness program.
-
-**Access:** `employee`
-""")
-async def enroll_program(program_id: str = Path(...), db=Depends(get_database), current_user: dict = Depends(_emp)):
-    return await WellnessService(db).enroll_program(program_id, current_user)
-
-
-@router.delete("/programs/{program_id}/enroll", summary="Unenroll from Program", description="""
-**Purpose:** Employee unenrolls from a wellness program.
-
-**Access:** `employee`
-""")
-async def unenroll_program(program_id: str = Path(...), db=Depends(get_database), current_user: dict = Depends(_emp)):
-    return await WellnessService(db).unenroll_program(program_id, current_user)
+async def get_mood_entries(
+    employee_id: Optional[str] = Query(None),
+    department: Optional[str] = Query(None),
+    date: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None),
+    score: Optional[int] = Query(None, ge=1, le=5),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    organization_id: Optional[str] = Query(None),
+    db=Depends(get_database), current_user: dict = Depends(_hr)
+):
+    return await WellnessService(db).get_mood_entries(
+        current_user, page, limit, employee_id, department,
+        date, from_date, to_date, month, year, score, organization_id
+    )

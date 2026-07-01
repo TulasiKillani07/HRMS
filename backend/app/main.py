@@ -19,6 +19,7 @@ from app.v1.announcements.route import router as announcements_router
 from app.v1.documents.route import router as documents_router
 from app.v1.wellness.route import router as wellness_router
 from app.v1.activity_logs.route import router as activity_logs_router
+from app.v1.talent_finder.route import router as talent_finder_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -146,6 +147,7 @@ app.include_router(announcements_router, prefix=f"{settings.API_V1_PREFIX}/annou
 app.include_router(documents_router, prefix=f"{settings.API_V1_PREFIX}/documents", tags=["Documents"])
 app.include_router(wellness_router, prefix=f"{settings.API_V1_PREFIX}/wellness", tags=["Wellness & Mood"])
 app.include_router(activity_logs_router, prefix=f"{settings.API_V1_PREFIX}/activity-logs", tags=["Activity Logs"])
+app.include_router(talent_finder_router, prefix=f"{settings.API_V1_PREFIX}/talent-finder", tags=["Talent Finder (AI)"])
 app.include_router(departments_router, prefix=f"{settings.API_V1_PREFIX}/departments", tags=["Departments"])
 app.include_router(attendance_router, prefix=f"{settings.API_V1_PREFIX}/attendance", tags=["Attendance"])
 app.include_router(leaves_router, prefix=f"{settings.API_V1_PREFIX}/leaves", tags=["Leaves"])
