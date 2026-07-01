@@ -424,7 +424,7 @@ When all 8 sections are completed, status auto-changes to `onboarding_in_progres
 
 | Section | What employee fills |
 |---|---|
-| `personal_details` | Date of birth, gender, blood group, marital status |
+| `personal_details` | Date of birth, gender, blood group, marital status, **resume_url (mandatory)** |
 | `address` | Current address + permanent address |
 | `emergency_contact` | Emergency contact name, relation, phone |
 | `bank_details` | ⚠️ Critical — Account number, IFSC, bank name |
@@ -440,8 +440,17 @@ before the employee can be approved/activated.
 
 **personal_details:**
 ```json
-{ "data": { "date_of_birth": "1995-03-15", "gender": "male", "blood_group": "O+", "marital_status": "single" } }
+{
+  "data": {
+    "date_of_birth": "1995-03-15",
+    "gender": "male",
+    "blood_group": "O+",
+    "marital_status": "single",
+    "resume_url": "https://res.cloudinary.com/dxbjp7jno/raw/upload/v1/hrms/resumes/resume.pdf"
+  }
+}
 ```
+> ⚠️ `resume_url` is **MANDATORY**. Upload resume first via `POST /hrms/upload/` then paste the URL here. This is required for the AI Talent Finder to work.
 
 **address:**
 ```json
@@ -597,7 +606,7 @@ Frontend uses the `is_fresher` flag from this response to show or hide the exper
   "shift": "General",
   "work_location": "Hyderabad Office",
   "salary_structure": { "basic": 50000, "hra": 20000, "special_allowance": 15000, "ctc": 1200000 },
-  "personal_details": { "date_of_birth": "1995-03-15", "gender": "male", "blood_group": "O+", "marital_status": "single" },
+  "personal_details": { "date_of_birth": "1995-03-15", "gender": "male", "blood_group": "O+", "marital_status": "single", "resume_url": "https://res.cloudinary.com/..." },
   "address": { "current": { "line1": "Flat 4B", "city": "Hyderabad", "state": "Telangana", "pincode": "500032" } },
   "emergency_contact": { "name": "Priya Verma", "relation": "Spouse", "phone": "+919876543211" },
   "bank_details": { "account_number": "123456789", "ifsc": "HDFC0001234", "bank_name": "HDFC Bank" },
